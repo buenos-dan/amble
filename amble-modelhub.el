@@ -42,15 +42,11 @@ Decode the UTF-8 bytes returned by `json-serialize' before combining with text."
                           (format "%s:%s:%s" (float-time) (random) (emacs-pid)))
              0 32))
 
-(defun amble-modelhub--read-key (file)
-  "Read the API key from the environment, falling back to FILE."
-  (let ((key (string-trim (or (getenv "MODELHUB_API_KEY") ""))))
-    (when (and (string-empty-p key) file)
-      (setq key (with-temp-buffer
-                  (insert-file-contents (expand-file-name file))
-                  (string-trim (buffer-string)))))
+(defun amble-modelhub--read-key ()
+  "Read the API key exclusively from EMACS_AMBLE_API_KEY."
+  (let ((key (string-trim (or (getenv "EMACS_AMBLE_API_KEY") ""))))
     (when (string-empty-p key)
-      (error "Set MODELHUB_API_KEY or amble-api-key-file"))
+      (user-error "Set EMACS_AMBLE_API_KEY in the environment used to start Emacs"))
     key))
 
 (defun amble-modelhub--endpoint (endpoint)
@@ -438,8 +434,8 @@ No tool is dispatched unless the entire response is complete and valid."
       (error (amble-modelhub--network-error handle err))
       (quit (amble-modelhub-cancel handle) (signal 'quit nil)))))
 
-(defun amble-modelhub-start (data key-file callback)
-  "Send Responses request DATA using KEY-FILE; return a cancellable handle.
+(defun amble-modelhub-start (data callback)
+  "Send Responses request DATA using EMACS_AMBLE_API_KEY; return a handle.
 CALLBACK receives (HANDLE EVENT) asynchronously.  DATA is an alist containing
 endpoint, model, input, tools, reasoning, max_output_tokens, timeout and
 max_retries."
@@ -450,7 +446,7 @@ max_retries."
     (unless (and (integerp retries) (<= 0 retries 10))
       (error "Rate-limit retries must be an integer from 0 to 10"))
     (let ((handle (amble-modelhub--make
-                   :data data :key (amble-modelhub--read-key key-file)
+                   :data data :key (amble-modelhub--read-key)
                    :endpoint endpoint :callback callback)))
       (condition-case err
           (amble-modelhub--post handle (amble-modelhub--payload handle))

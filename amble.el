@@ -1,6 +1,7 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.4.0
+;; Version: 0.4.1
+;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, tools
 
@@ -20,10 +21,6 @@
 A complete /responses URL is also accepted; authentication uses a Bearer header." :type 'string)
 (defcustom amble-model "gpt-6-astra"
   "Model name sent to ModelHub." :type 'string)
-(defcustom amble-api-key-file nil
-  "Private file containing the AK.  MODELHUB_API_KEY takes precedence.
-Keep this outside the package, with file permissions 0600."
-  :type '(choice (const nil) file))
 (defcustom amble-reasoning-effort 'medium
   "Reasoning effort sent to the Responses API."
   :type '(choice (const none) (const minimal) (const low) (const medium)
@@ -531,7 +528,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
                                     `((summary . ,(symbol-name amble-reasoning-summary))))))
                    (tools . ,(amble-tool-specs))
                    (input . ,(vconcat amble--messages)))
-                 amble-api-key-file #'amble--event)))
+                 #'amble--event)))
       (quit (amble-cancel) (signal 'quit nil))
       (error (amble--fail (error-message-string err))))))
 

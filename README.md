@@ -6,28 +6,33 @@
 
 需要支持 HTTPS/TLS 的 Emacs 29.1+ 和能访问 ModelHub 的网络。
 
-在 Emacs 启动配置中加入以下内容；本机已在 init.el 中配置好包路径与私有密钥路径。
+Emacs 30+ 可直接用内置 `use-package` 的 `:vc` 从 GitHub 安装，由 `package.el` 管理加载路径：
 
 ```elisp
-(add-to-list 'load-path "/path/to/amble")
-(require 'amble)
-
-;; 二选一：启动 Emacs 前设置 MODELHUB_API_KEY，或指定只含 AK 的私有文件。
-(setopt amble-endpoint "https://aidp.bytedance.net/api/modelhub/online"
-        amble-api-key-file "/path/outside/package/modelhub-ak"
-        amble-reasoning-effort 'medium
-        amble-reasoning-summary 'auto)
-;; 私有文件权限应为 0600；不要把 AK 放入版本库。
-
-(amble-mode 1)
-
-;; 可选：你的实际 Org inbox。未配置时使用已经存在的 org-default-notes-file。
-(setq amble-todo-file "~/org/inbox.org")
-
-;; 可选：快捷键与个人偏好。
-(global-set-key (kbd "C-c a") #'amble)
-(setq amble-extra-instructions "请用中文简短回复，优先沿用我的现有 Emacs 配置。")
+(use-package amble
+  :ensure nil
+  :vc (:url "https://github.com/buenos-dan/amble.git"
+       :branch "main"
+       :rev :newest)
+  :demand t
+  :config
+  (amble-mode 1))
 ```
+
+`:ensure nil` 避免再去 ELPA/MELPA 查找，`:vc` 仍会自动安装。首次安装取 main 的最新提交，之后可用 `M-x package-vc-upgrade RET amble` 更新，不会每次启动都拉取。
+
+启动 Emacs 前在其环境中设置 `EMACS_AMBLE_API_KEY`。Amble 只读取这个变量，不再读取密钥文件或旧环境变量；不要把密钥写进 init.el 或仓库。终端启动的 Emacs 会继承 shell 环境，从 macOS 图标启动则需要让图形会话也获得该变量。可执行 `(and (getenv "EMACS_AMBLE_API_KEY") t)` 检查是否存在，不打印密钥。
+
+可选配置：
+
+```elisp
+(setopt amble-reasoning-effort 'medium
+        amble-reasoning-summary 'auto
+        amble-todo-file "~/org/inbox.org"
+        amble-extra-instructions "请用中文简短回复，优先沿用我的现有 Emacs 配置。")
+```
+
+在 Emacs 29 上可先用 `(package-vc-install "https://github.com/buenos-dan/amble.git")` 安装，再 `(require 'amble)` 并启用 `(amble-mode 1)`。
 
 在当前工作 buffer 里运行 `M-x amble`，输入自然语言。模型会根据当前 buffer、窗口、项目和会话历史决定怎么做。执行结果直接显示在原生 Emacs 窗口，过程记录在 `*amble*`。
 
@@ -106,7 +111,7 @@
 
 默认基础地址为 `https://aidp.bytedance.net/api/modelhub/online`。Amble 自动追加 `/responses`，实际发送 `POST https://aidp.bytedance.net/api/modelhub/online/responses`；也接受已经包含 `/responses` 的完整地址。
 
-认证使用 `Authorization: Bearer <API key>` 请求头。密钥优先取 `MODELHUB_API_KEY`，否则读取 `amble-api-key-file`，不会添加到 URL。请求关闭 URL 历史、缓存、调试输出和 Cookie，不自动跟随重定向；诊断信息会隐藏密钥，临时请求缓冲区在完成、失败、超时或取消时释放。
+认证使用 `Authorization: Bearer <API key>` 请求头。密钥仅从 `EMACS_AMBLE_API_KEY` 读取，不会添加到 URL。请求关闭 URL 历史、缓存、调试输出和 Cookie，不自动跟随重定向；诊断信息会隐藏密钥，临时请求缓冲区在完成、失败、超时或取消时释放。
 
 请求采用 Responses 格式：
 
@@ -171,4 +176,4 @@ Lisp 操作在 Emacs 主线程执行。15 秒超时是协作式的，不能强�
 - `amble-jobs.el`：异步任务与完成通知。
 - `amble-org.el`、`amble-git.el`：按需加载的扩展。
 
-本次工具名称与参数有调整，更新后请重启 Emacs 并开始新会话。旧模型会话不应继续使用旧工具定义。配置中的 `amble-todo-file`、模型、密钥和网络选项继续有效。
+本次工具名称与参数有调整，更新后请重启 Emacs 并开始新会话。旧模型会话不应继续使用旧工具定义。配置中的 `amble-todo-file`、模型和网络选项继续有效；认证改为 `EMACS_AMBLE_API_KEY` 环境变量。
