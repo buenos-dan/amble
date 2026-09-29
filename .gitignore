@@ -1,0 +1,17 @@
+# Emacs generated files
+*.elc
+*.eln
+*~
+\#*\#
+.\#*
+
+# Local credentials and environment
+modelhub-ak
+.env
+.env.*
+!.env.example
+
+# Local scratch files
+.DS_Store
+work/
+outputs/
