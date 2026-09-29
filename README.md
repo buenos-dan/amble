@@ -2,8 +2,6 @@
 
 一个在 **运行中的 Emacs** 内工作的纯 Elisp 助手，支持自然对话和编辑器操作。它可以理解编辑器状态、发现已安装包的能力、查询文档、调用函数、组合 Elisp 操作、编辑未保存的文本并验证结果。Git、Org 和 TODO 是附带的便捷工具，能力边界由 Emacs 本身决定。
 
-通过 ModelHub 的原生 Responses API 调用 `gpt-6-astra`。使用 Emacs 自带的异步 HTTPS 和 JSON 能力，无需 Python、curl、Codex CLI 或 MCP 服务。
-
 ## 使用
 
 需要支持 HTTPS/TLS 的 Emacs 29.1+ 和能访问 ModelHub 的网络。
