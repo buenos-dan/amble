@@ -70,7 +70,7 @@ CAPABILITY, when present, enables lazy loading outside the core tool list."
     (unless (and entry (amble-tools--active-p entry))
       (user-error "Tool %s is unavailable; inspect emacs_capabilities first" name))
     (amble-tools--validate (alist-get 'parameters (plist-get entry :schema)) args name)
-    (funcall (plist-get entry :handler) args)))
+    (amble-in-work-frame (lambda () (funcall (plist-get entry :handler) args)))))
 
 (defun amble-tools-capabilities (args)
   "List or enable a known capability according to ARGS."

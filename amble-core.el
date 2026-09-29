@@ -27,6 +27,18 @@
 Timers cannot interrupt CPU-bound Lisp or blocking native functions; use C-g."
   :type 'number)
 (defvar amble-origin-buffer nil)
+(defvar amble-work-frame nil
+  "Work frame for the current task, separate from the conversation child frame.")
+
+(defun amble-in-work-frame (function)
+  "Call FUNCTION in the task's work frame without stealing keyboard focus."
+  (let ((frame (or amble-work-frame (selected-frame))))
+    (unless (and (frame-live-p frame) (not (frame-parameter frame 'amble-conversation)))
+      (user-error "The task's work frame was closed; open Amble from a work frame"))
+    (if (eq frame (selected-frame))
+        (with-current-buffer (amble--buffer nil) (funcall function))
+      (with-selected-frame frame
+        (with-current-buffer (amble--buffer nil) (funcall function))))))
 (defcustom amble-context-buffer-predicate nil
   "Optional function deciding which buffers may appear in automatic context.
 Called with a buffer. Nil includes all public buffer metadata. This is a context
@@ -75,6 +87,7 @@ filter, not an execution sandbox: emacs_eval retains full Emacs authority."
 (defun amble--context-buffer-p (buffer)
   "Whether BUFFER can appear in automatic context."
   (and (not (string-prefix-p " " (buffer-name buffer)))
+       (not (equal (buffer-name buffer) "*amble*"))
        (or (null amble-context-buffer-predicate)
            (funcall amble-context-buffer-predicate buffer))))
 

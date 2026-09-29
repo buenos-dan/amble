@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.4.2
+;; Version: 0.5.0
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -14,6 +14,7 @@
 (require 'amble-tools)
 (require 'amble-modelhub)
 (require 'button)
+(require 'amble-frame)
 (defgroup amble-client nil "ModelHub agent client." :group 'amble)
 
 (defcustom amble-endpoint "https://aidp.bytedance.net/api/modelhub/online"
@@ -205,6 +206,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 
 (define-key amble-session-mode-map (kbd "TAB") #'amble-toggle-details)
 (define-key amble-session-mode-map [tab] #'amble-toggle-details)
+(define-key amble-session-mode-map (kbd "q") #'amble-hide)
+(define-key amble-session-mode-map (kbd "<escape>") #'amble-hide)
 
 (defvar-local amble--display-ready nil)
 (defvar-local amble--process-section nil)
@@ -476,19 +479,18 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
     (amble--log "Amble" "Ask about or operate your live Emacs. Use M-x amble from any buffer."))
   (unless (buffer-local-value 'amble--display-ready (get-buffer "*amble*"))
     (amble-refresh-display))
-  (pop-to-buffer "*amble*"))
+  (amble-frame-display (get-buffer "*amble*") t))
 
 (defun amble-context ()
   "Preview automatic context locally, without contacting the model."
   (interactive)
-  (unless (derived-mode-p 'amble-session-mode)
-    (setq amble-origin-buffer (current-buffer)))
-  (let ((context (amble-modelhub--json (amble-tools-context nil))))
+  (amble-frame-capture-origin)
+  (let ((context (amble-modelhub--json (amble-in-work-frame (lambda () (amble-tools-context nil))))))
     (with-current-buffer (get-buffer-create "*amble-context*")
       (let ((inhibit-read-only t))
         (erase-buffer) (insert context) (json-pretty-print-buffer)
         (goto-char (point-min)) (special-mode)))
-    (display-buffer "*amble-context*")))
+    (amble-in-work-frame (lambda () (display-buffer "*amble-context*")))))
 
 (defun amble--append (message)
   "Add MESSAGE to the session."
@@ -622,15 +624,13 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
   "Ask PROMPT about or operate the current Emacs environment."
   (interactive
    (progn
-     (unless (derived-mode-p 'amble-session-mode)
-       (setq amble-origin-buffer (current-buffer)))
+     (amble-frame-capture-origin)
      (list (read-string "Amble: " nil 'amble--history))))
   (when amble--busy (user-error "An agent task is running; C-g cancels it"))
   (when (string-empty-p (string-trim prompt)) (user-error "Enter a request"))
-  (unless (derived-mode-p 'amble-session-mode)
-    (setq amble-origin-buffer (current-buffer)))
+  (amble-frame-capture-origin)
   (amble-mode 1)
-  (amble-tools-select-context)
+  (amble-in-work-frame #'amble-tools-select-context)
   (unless amble--messages
     (setq amble--messages
           (list `((role . "system")
@@ -642,8 +642,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
         (amble--append
          `((role . "user")
            (content . ,(concat prompt "\n\nInvocation context (data):\n"
-                                (amble-modelhub--json (amble-tools-context nil))))))
-        (display-buffer "*amble*" '(display-buffer-at-bottom (window-height . 0.28)))
+                                (amble-modelhub--json (amble-in-work-frame (lambda () (amble-tools-context nil))))))))
+        (amble-frame-display (get-buffer "*amble*"))
         (amble--request))
     (error (amble--fail (error-message-string err)))))
 
@@ -685,46 +685,24 @@ Completed editor actions remain in place. Conversation is reset to avoid replay.
   (if amble-mode
       (amble-tools-enable)
     (remove-hook 'post-command-hook #'amble--touch-buffer)
-    (amble-cancel)))
-
-;; Native popup: keep the conversation alive when its window is hidden.
-(defvar amble-popup--return-window nil
-  "Work window to focus after hiding the Agent popup.")
-
-(defun amble-popup--remember-origin (&rest _)
-  "Remember the work buffer before displaying the Agent conversation."
-  (unless (derived-mode-p 'amble-session-mode)
-    (setq amble-origin-buffer (current-buffer)
-          amble-popup--return-window (selected-window))))
+    (amble-cancel)
+    (amble-hide)))
 
 (defun amble-toggle-popup ()
-  "Show or hide the Agent popup without cancelling requests.
-When opened from a work buffer, use that buffer as the request context."
+  "Toggle the floating conversation without changing the work layout."
   (interactive)
-  (let ((windows (get-buffer-window-list "*amble*" nil (selected-frame))))
-    (if windows
-        (progn
-          (dolist (window windows)
-            (if (one-window-p t)
-                (with-selected-window window
-                  (switch-to-buffer (other-buffer (window-buffer window) t)))
-              (delete-window window)))
-          (when (and (window-live-p amble-popup--return-window)
-                     (eq (window-frame amble-popup--return-window)
-                         (selected-frame)))
-            (select-window amble-popup--return-window)))
-      (amble-show)
-      (goto-char (point-max))
-      (recenter -2))))
+  (if (and (frame-live-p amble-frame--child)
+           (frame-visible-p amble-frame--child))
+      (amble-hide)
+    (amble-show)))
 
+;; Replace only Amble's old side-window rule when reloading this version.
+(setq display-buffer-alist
+      (cl-remove-if (lambda (rule) (equal (car-safe rule) "\\`\\*amble\\*\\'"))
+                    display-buffer-alist))
 (add-to-list 'display-buffer-alist
-             '("\\`\\*amble\\*\\'"
-               (display-buffer-in-side-window)
-               (side . bottom)
-               (slot . 0)
-               (window-height . 0.30)
-               (window-parameters . ((no-delete-other-windows . t)))))
-(advice-add 'amble-show :before #'amble-popup--remember-origin)
+             '("\\`\\*amble\\*\\'" (amble-frame-display-buffer)))
+(advice-remove 'amble-show 'amble-popup--remember-origin)
 (global-set-key (kbd "C-c e") #'amble-toggle-popup)
 
 (when (get-buffer "*amble*")
