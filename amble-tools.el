@@ -1,6 +1,6 @@
 ;;; amble-tools.el --- Core tool registry and capability discovery -*- lexical-binding: t; -*-
 ;; Version: 0.4.0
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "31.1"))
 (require 'amble-core)
 (require 'amble-files)
 (require 'amble-edit)

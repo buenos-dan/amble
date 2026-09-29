@@ -1,6 +1,6 @@
 ;;; amble-core.el --- Live Emacs tools for an agent -*- lexical-binding: t; -*-
 
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "31.1"))
 ;; Version: 0.4.0
 
 ;;; Commentary:

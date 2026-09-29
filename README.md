@@ -1,12 +1,12 @@
 # Amble
 
-一个在 **运行中的 Emacs** 内工作的纯 Elisp 助手，支持自然对话和编辑器操作。它可以理解编辑器状态、发现已安装包的能力、查询文档、调用函数、组合 Elisp 操作、编辑未保存的文本并验证结果。Git、Org 和 TODO 是附带的便捷工具，能力边界由 Emacs 本身决定。
+一个在 **运行中的 Emacs** 内的纯 Elisp 助手，支持自然对话和编辑器操作。它可以理解编辑器状态、发现已安装包的能力、查询文档、调用函数、组合 Elisp 操作、编辑未保存的文本并验证结果。Git、Org 和 TODO 是附带的便捷工具，能力边界由 Emacs 本身决定。
 
 ## 使用
 
-需要支持 HTTPS/TLS 的 Emacs 29.1+ 和能访问 ModelHub 的网络。
+需要支持 HTTPS/TLS 的 Emacs 31.1 和能访问 ModelHub 的网络。
 
-Emacs 30+ 可直接用内置 `use-package` 的 `:vc` 从 GitHub 安装，由 `package.el` 管理加载路径：
+使用内置 `use-package` 的 `:vc` 从 GitHub 安装，由 `package.el` 管理加载路径：
 
 ```elisp
 (use-package amble
@@ -21,7 +21,7 @@ Emacs 30+ 可直接用内置 `use-package` 的 `:vc` 从 GitHub 安装，由 `pa
 
 `:ensure nil` 避免再去 ELPA/MELPA 查找，`:vc` 仍会自动安装。首次安装取 main 的最新提交，之后可用 `M-x package-vc-upgrade RET amble` 更新，不会每次启动都拉取。
 
-启动 Emacs 前在其环境中设置 `EMACS_AMBLE_API_KEY`。Amble 只读取这个变量，不再读取密钥文件或旧环境变量；不要把密钥写进 init.el 或仓库。终端启动的 Emacs 会继承 shell 环境，从 macOS 图标启动则需要让图形会话也获得该变量。可执行 `(and (getenv "EMACS_AMBLE_API_KEY") t)` 检查是否存在，不打印密钥。
+启动 Emacs 前在其环境中设置 `EMACS_AMBLE_API_KEY`。Amble 从该变量读取密钥；不要把密钥写进 init.el 或仓库。终端启动的 Emacs 会继承 shell 环境，从 macOS 图标启动则需要让图形会话也获得该变量。可执行 `(and (getenv "EMACS_AMBLE_API_KEY") t)` 检查是否存在，不打印密钥。
 
 可选配置：
 
@@ -31,8 +31,6 @@ Emacs 30+ 可直接用内置 `use-package` 的 `:vc` 从 GitHub 安装，由 `pa
         amble-todo-file "~/org/inbox.org"
         amble-extra-instructions "请用中文简短回复，优先沿用我的现有 Emacs 配置。")
 ```
-
-在 Emacs 29 上可先用 `(package-vc-install "https://github.com/buenos-dan/amble.git")` 安装，再 `(require 'amble)` 并启用 `(amble-mode 1)`。
 
 在当前工作 buffer 里运行 `M-x amble`，输入自然语言。模型会根据当前 buffer、窗口、项目和会话历史决定怎么做。执行结果直接显示在原生 Emacs 窗口，过程记录在 `*amble*`。
 
@@ -176,4 +174,4 @@ Lisp 操作在 Emacs 主线程执行。15 秒超时是协作式的，不能强�
 - `amble-jobs.el`：异步任务与完成通知。
 - `amble-org.el`、`amble-git.el`：按需加载的扩展。
 
-本次工具名称与参数有调整，更新后请重启 Emacs 并开始新会话。旧模型会话不应继续使用旧工具定义。配置中的 `amble-todo-file`、模型和网络选项继续有效；认证改为 `EMACS_AMBLE_API_KEY` 环境变量。
+更新后重启 Emacs，加载新代码并开始新会话。

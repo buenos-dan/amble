@@ -1,7 +1,7 @@
 ;;; amble-modelhub.el --- Asynchronous ModelHub transport -*- lexical-binding: t; -*-
 
 ;; Version: 0.3.6
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "31.1"))
 
 ;;; Commentary:
 ;; Native HTTPS for the Responses API.  This module never executes tools.

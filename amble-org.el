@@ -9,8 +9,7 @@
       (unless (derived-mode-p 'org-mode) (user-error "This is not an Org buffer"))
       (pop-to-buffer b)
       (org-fold-show-all)
-      (funcall (if (fboundp 'org-link-preview-region)
-                   'org-link-preview-region 'org-display-inline-images) t t)
+      (org-link-preview-region t t)
       (font-lock-ensure)
       `((displayed . ,(buffer-name b))
         (inline_images . ,(cl-count-if

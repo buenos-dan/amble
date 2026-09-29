@@ -1,8 +1,8 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.4.1
+;; Version: 0.4.2
 ;; URL: https://github.com/buenos-dan/amble
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
 
 ;;; Commentary:
