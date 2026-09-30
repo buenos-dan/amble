@@ -4,12 +4,12 @@
 (require 'amble-core)
 (require 'button)
 (declare-function amble "amble" (&optional prompt))
-(declare-function amble-session-mode "amble" ())
+(declare-function amble-session-mode "amble-display" ())
+(declare-function amble-toggle-details "amble-display" ())
 (declare-function amble-keyboard-quit "amble" ())
 (defvar amble--busy)
 (defvar amble--last-error)
 (defvar amble--history nil)
-(defvar amble-session-mode-map)
 
 (defvar-local amble-input--prompt nil)
 (defvar-local amble-input--start nil)
@@ -54,7 +54,9 @@
     handle-switch-frame handle-select-window ignore ignore-preserving-kill-region
     amble-toggle-popup amble-show amble-hide amble-input-focus
     amble-input-send amble-input-previous amble-input-next
-    amble-cancel amble-new-session amble-keyboard-quit)
+    amble-cancel amble-new-session amble-keyboard-quit
+    amble-input-select-all amble-input-return amble-input-tab
+    amble-input--mouse-activate)
   "Global commands usable in the conversation without leaving its editing task.")
 
 (defun amble-input--notify (text)
@@ -67,40 +69,13 @@
   (interactive)
   (amble-input--notify "Shortcut disabled here; Esc returns to work"))
 
-(defun amble-input--editing-map (source &optional seen)
-  "Copy only editing bindings from SOURCE, blocking all other keys.
-Retain prefix maps and character ranges, including Unicode input.  SEEN
-prevents recursion when a user's prefix maps refer back to each other."
-  (let ((seen (or seen (make-hash-table :test #'eq))))
-    (or (gethash source seen)
-        (let ((map (make-keymap)))
-          (puthash source map seen)
-          (define-key map [t] #'amble-input--blocked-key)
-          (map-keymap
-           (lambda (event binding)
-             (unless (memq event '(menu-bar tool-bar tab-bar))
-               (let ((allowed
-                      (cond ((keymapp binding) (amble-input--editing-map binding seen))
-                            ((memq binding amble-input--editing-commands) binding))))
-                 (when allowed
-                   (if (consp event)
-                       (set-char-table-range (cadr map) event allowed)
-                     (define-key map (vector event) allowed))))))
-           source)
-          map))))
-
-(defun amble-input--allow-translated-keys (map)
-  "Let native function-key translations run before MAP filters commands.
-An explicit nil binding suppresses MAP's catch-all for an otherwise unbound
-event.  Emacs can then translate Backspace, Delete, Return and keypad events
-normally, including the terminal's configured deletion direction.  The
-translated keys are still checked against the isolated command map."
-  (map-keymap
-   (lambda (event translation)
-     (when (and (symbolp event) (arrayp translation)
-                (not (lookup-key (current-global-map) (vector event) t)))
-       (define-key map (vector event) nil)))
-   local-function-key-map))
+(defun amble-input--guard-command ()
+  "Block unrelated commands after Emacs has resolved keys and translations.
+The sparse overriding map isolates minor modes; temporary input and search
+maps keep their own command handling.  This is UI isolation, not a sandbox."
+  (unless (or overriding-terminal-local-map
+              (memq this-command amble-input--editing-commands))
+    (setq this-command #'amble-input--blocked-key)))
 
 (defun amble-input-select-all ()
   "Select the whole draft when editing it; otherwise select the transcript."
@@ -123,36 +98,43 @@ translated keys are still checked against the isolated command map."
         (progn (mouse-set-point event) (button-activate button))
       (mouse-yank-primary event))))
 
-(defun amble-input--shift-motion ()
-  "Move with Shift held, retaining ordinary region selection."
+(defvar amble-session-mode-map (make-sparse-keymap)
+  "Conversation actions; other editing keys use Emacs's native bindings.")
+(set-keymap-parent amble-session-mode-map text-mode-map)
+(dolist (binding '(("RET" . amble-input-return)
+                   ("TAB" . amble-input-tab)
+                   ("<tab>" . amble-input-tab)
+                   ("C-c C-c" . amble-input-send)
+                   ("C-c C-k" . amble-cancel)
+                   ("C-c C-n" . amble-new-session)
+                   ("C-c C-i" . amble-input-focus)
+                   ("M-p" . amble-input-previous)
+                   ("M-n" . amble-input-next)
+                   ("C-g" . amble-keyboard-quit)
+                   ("<escape>" . amble-hide)))
+  (keymap-set amble-session-mode-map (car binding) (cdr binding)))
+(define-key amble-session-mode-map [remap mark-whole-buffer] #'amble-input-select-all)
+(define-key amble-session-mode-map [mouse-2] #'amble-input--mouse-activate)
+
+(defun amble-input-return ()
+  "Insert a newline in the draft, activate a heading or return to the draft."
   (interactive)
-  (let* ((event (event-convert-list
-                 (append (remq 'shift (event-modifiers last-command-event))
-                         (list (event-basic-type last-command-event)))))
-         (command (key-binding (vector event)))
-         (this-command-keys-shift-translated t))
-    (setq this-command command)
-    (call-interactively command)))
+  (if (and (amble-input--ready-p) (>= (point) amble-input--start))
+      (newline)
+    (if-let* ((button (button-at (point)))) (button-activate button)
+      (amble-input-focus))))
+
+(defun amble-input-tab ()
+  "Indent in the draft or toggle transcript details."
+  (interactive)
+  (if (and (amble-input--ready-p) (>= (point) amble-input--start))
+      (indent-for-tab-command)
+    (amble-toggle-details)))
 
 (defun amble-input-setup-keys ()
-  "Isolate conversation keys from unrelated global and minor-mode bindings.
-Rebuild on opening to retain the user's current global editing and Amble
-shortcuts.  Minibuffers and temporary input/search maps remain independent."
-  (let ((editing (amble-input--editing-map (current-global-map))))
-    (amble-input--allow-translated-keys editing)
-    (define-key editing (kbd "C-g") #'amble-keyboard-quit)
-    (define-key editing [remap mark-whole-buffer] #'amble-input-select-all)
-    ;; A catch-all stops Emacs's implicit Shift translation.  Preserve the
-    ;; standard shifted navigation explicitly, including region activation.
-    (dolist (key '("S-<left>" "S-<right>" "S-<up>" "S-<down>"
-                   "S-<home>" "S-<end>" "S-<prior>" "S-<next>"
-                   "C-S-<left>" "C-S-<right>" "C-S-<up>" "C-S-<down>"
-                   "C-S-<home>" "C-S-<end>"))
-      (define-key editing (kbd key) #'amble-input--shift-motion))
-    ;; The overriding map also bypasses button text-property keymaps.
-    (define-key editing [mouse-2] #'amble-input--mouse-activate)
-    (setq-local overriding-local-map
-                (make-composed-keymap amble-session-mode-map editing))))
+  "Use conversation bindings and guard unrelated commands in this buffer."
+  (setq-local overriding-local-map amble-session-mode-map)
+  (add-hook 'pre-command-hook #'amble-input--guard-command -90 t))
 
 ;; Mode changes on reload must not lose the boundary or treat a draft as history.
 (dolist (symbol '(amble-input--prompt amble-input--start amble-input--revision))
@@ -201,7 +183,7 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
   (let ((buffer (get-buffer-create "*amble*")))
     (with-current-buffer buffer
       (unless (derived-mode-p 'amble-session-mode) (amble-session-mode))
-      (amble-input-setup))
+      (unless (amble-input--ready-p) (amble-input-setup)))
     buffer))
 
 (defun amble-input--with-history (function)
@@ -304,21 +286,6 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
             (amble-input--replace-draft (nth amble-input--history-index amble--history)))
         (amble-input--replace-draft (or amble-input--saved-draft ""))
         (setq amble-input--history-index nil amble-input--saved-draft nil)))))
-
-(defun amble-input-migrate ()
-  "Move a previous separate input buffer's draft into the conversation once."
-  (when-let* ((old (get-buffer "*amble-input*")))
-    (let ((text (with-current-buffer old (buffer-substring-no-properties (point-min) (point-max)))))
-      (with-current-buffer (amble-input-buffer)
-        (unless (string-empty-p text)
-          (goto-char (point-max))
-          (unless (= amble-input--start (point-max)) (insert "\n"))
-          (insert text)))
-      (with-current-buffer old
-        (let ((inhibit-read-only t)) (erase-buffer) (set-buffer-modified-p nil)))
-      (dolist (window (get-buffer-window-list old nil t))
-        (set-window-parameter window 'amble-obsolete-input t))
-      (kill-buffer old))))
 
 (provide 'amble-input)
 ;;; amble-input.el ends here

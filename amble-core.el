@@ -1,7 +1,6 @@
 ;;; amble-core.el --- Live Emacs tools for an agent -*- lexical-binding: t; -*-
 
 ;; Package-Requires: ((emacs "31.1"))
-;; Version: 0.4.0
 
 ;;; Commentary:
 ;; Backend-independent tools.  Lisp evaluation intentionally has the authority

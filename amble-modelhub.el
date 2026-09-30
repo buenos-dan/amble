@@ -1,6 +1,5 @@
 ;;; amble-modelhub.el --- Asynchronous ModelHub transport -*- lexical-binding: t; -*-
 
-;; Version: 0.3.6
 ;; Package-Requires: ((emacs "31.1"))
 
 ;;; Commentary:
@@ -127,7 +126,6 @@ items are omitted; no completed Emacs tool is executed again by this retry."
       (when (< (length clean) (length input))
         (setf (amble-modelhub--request-recovered-input handle) clean)
         (setf (alist-get 'input data) clean)
-        (setf (amble-modelhub--request-started handle) (float-time))
         (amble-modelhub--post handle (amble-modelhub--payload handle))
         t))))
 

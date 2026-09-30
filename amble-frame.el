@@ -19,20 +19,10 @@
   "Remember the work frame and buffer while outside the conversation.
 An active request keeps its original work target even if the panel is reopened."
   (unless (or (frame-parameter nil 'amble-conversation)
+              (derived-mode-p 'amble-session-mode)
               (minibufferp) (bound-and-true-p amble--busy))
-    (if (derived-mode-p 'amble-session-mode)
-        ;; Reloading from the former bottom window still has a work parent.
-        (when-let* ((window
-                     (or (and (buffer-live-p amble-origin-buffer)
-                              (get-buffer-window amble-origin-buffer (selected-frame)))
-                         (cl-find-if
-                          (lambda (w) (not (member (buffer-name (window-buffer w))
-                                                  '("*amble*" "*amble-input*"))))
-                          (window-list nil 'no-minibuf)))))
-          (setq amble-work-frame (selected-frame)
-                amble-origin-buffer (window-buffer window)))
-      (setq amble-work-frame (selected-frame)
-            amble-origin-buffer (current-buffer)))))
+    (setq amble-work-frame (selected-frame)
+          amble-origin-buffer (current-buffer))))
 
 (defun amble-frame--work-parent ()
   "Return the live work frame, never substituting an unrelated frame."
@@ -61,15 +51,7 @@ The frame root can be an internal layout node after a help buffer splits it."
   (unless (buffer-live-p buffer)
     (user-error "The Amble buffer was closed; open the conversation again"))
   (let ((window (or (get-buffer-window buffer frame)
-                    (cl-find-if
-                     (lambda (window)
-                       (and (window-live-p window)
-                            (not (equal (buffer-name (window-buffer window)) "*amble-input*"))))
-                     (window-list frame 'no-minibuf))
-                    (let ((selected (frame-selected-window frame)))
-                      (and (window-live-p selected)
-                           (not (window-minibuffer-p selected)) selected))
-                    (cl-find-if #'window-live-p (window-list frame 'no-minibuf)))))
+                    (car (window-list frame 'no-minibuf)))))
     (unless (window-live-p window)
       (user-error "The Amble frame has no usable conversation window"))
     (unless (eq (window-buffer window) buffer)
@@ -79,27 +61,12 @@ The frame root can be an internal layout node after a help buffer splits it."
     (set-window-dedicated-p window t)
     window))
 
-(defun amble-frame--layout (frame transcript)
-  "Return the live conversation window in FRAME, without an input split."
-  (let ((conversation (amble-frame--conversation-window frame transcript)))
-    ;; Only retire the previous separate composer pane, never unrelated Help.
-    (dolist (window (window-list frame 'no-minibuf))
-      (when (and (not (eq window conversation))
-                 (or (window-parameter window 'amble-obsolete-input)
-                     (equal (buffer-name (window-buffer window)) "*amble-input*")))
-        (delete-window window)))
-    (set-window-parameter conversation 'amble-obsolete-input nil)
-    conversation))
-
 (defun amble-frame-display (buffer &optional focus)
   "Show BUFFER in a child frame; FOCUS selects it for interaction."
   (amble-frame-capture-origin)
   (let ((parent (amble-frame--work-parent)))
     (unless (display-graphic-p parent)
       (user-error "Amble's floating conversation requires a graphical Emacs frame"))
-    (dolist (window (get-buffer-window-list "*amble*" nil parent))
-      (when (and (window-live-p window) (window-parameter window 'window-side))
-        (quit-window nil window)))
     (unless (and (frame-live-p amble-frame--child)
                  (eq amble-frame--parent parent)
                  (eq (frame-parent amble-frame--child) parent))
@@ -122,14 +89,15 @@ The frame root can be an internal layout node after a help buffer splits it."
                (width . 60) (height . 24))))
       (amble-frame--fit parent))
     (let ((child amble-frame--child))
-      (amble-frame--layout child buffer)
+      (amble-frame--conversation-window child buffer)
       (make-frame-visible child)
-      (when focus
-        (select-frame-set-input-focus child)
-        ;; Focus and visibility hooks may replace or rearrange the leaf windows.
-        (select-window (amble-frame--layout child buffer))
-        (amble-input-focus))
-      (amble-frame--layout child buffer))))
+      (when focus (select-frame-set-input-focus child))
+      ;; Visibility/focus hooks can rearrange windows; resolve the leaf again.
+      (let ((window (amble-frame--conversation-window child buffer)))
+        (when focus
+          (select-window window)
+          (amble-input-focus))
+        window))))
 
 (defun amble-frame-display-buffer (buffer _alist)
   "Route display-buffer requests for BUFFER into the floating conversation."
