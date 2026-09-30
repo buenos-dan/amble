@@ -33,7 +33,8 @@
     delete-char delete-forward-char delete-backward-char backward-delete-char
     backward-delete-char-untabify delete-horizontal-space just-one-space
     delete-blank-lines kill-line kill-whole-line kill-word backward-kill-word
-    kill-sentence backward-kill-sentence kill-region kill-ring-save
+    kill-sentence backward-kill-sentence kill-sexp backward-kill-sexp
+    kill-region kill-ring-save
     copy-region-as-kill yank yank-pop yank-from-kill-ring
     clipboard-yank clipboard-kill-ring-save clipboard-kill-region
     ns-copy-including-secondary ns-paste-secondary
@@ -85,6 +86,28 @@ prevents recursion when a user's prefix maps refer back to each other."
            source)
           map))))
 
+(defun amble-input--allow-translated-keys (map)
+  "Let native function-key translations run before MAP filters commands.
+An explicit nil binding suppresses MAP's catch-all for an otherwise unbound
+event.  Emacs can then translate Backspace, Delete, Return and keypad events
+normally, including the terminal's configured deletion direction.  The
+translated keys are still checked against the isolated command map."
+  (map-keymap
+   (lambda (event translation)
+     (when (and (symbolp event) (arrayp translation)
+                (not (lookup-key (current-global-map) (vector event) t)))
+       (define-key map (vector event) nil)))
+   local-function-key-map))
+
+(defun amble-input-select-all ()
+  "Select the whole draft when editing it; otherwise select the transcript."
+  (interactive)
+  (if (and (amble-input--ready-p) (>= (point) amble-input--start))
+      (save-restriction
+        (narrow-to-region amble-input--start (point-max))
+        (call-interactively #'mark-whole-buffer))
+    (call-interactively #'mark-whole-buffer)))
+
 (defun amble-input--mouse-activate (event)
   "Activate a transcript button at EVENT, or paste normally in the draft."
   (interactive "e")
@@ -113,7 +136,9 @@ prevents recursion when a user's prefix maps refer back to each other."
 Rebuild on opening to retain the user's current global editing and Amble
 shortcuts.  Minibuffers and temporary input/search maps remain independent."
   (let ((editing (amble-input--editing-map (current-global-map))))
+    (amble-input--allow-translated-keys editing)
     (define-key editing (kbd "C-g") #'amble-keyboard-quit)
+    (define-key editing [remap mark-whole-buffer] #'amble-input-select-all)
     ;; A catch-all stops Emacs's implicit Shift translation.  Preserve the
     ;; standard shifted navigation explicitly, including region activation.
     (dolist (key '("S-<left>" "S-<right>" "S-<up>" "S-<down>"
