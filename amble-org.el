@@ -17,35 +17,17 @@
                            (overlays-in (point-min) (point-max))))
         (graphical . ,(if (display-graphic-p) t :false))))))
 
+(declare-function amble-zk--require "amble-zk")
+(declare-function amble-zk-tool "amble-zk" (args))
+(defvar zk-inbox-file)
+
 (defun amble-add-todo (title &optional file)
-  "Append TITLE to FILE or the configured Org inbox and display it.
-Save when the target had no preexisting unsaved edits."
-  (when (or (string-empty-p (string-trim title)) (string-match-p "[\r\n]" title))
-    (user-error "A TODO title must be a nonempty single line"))
-  (let* ((target (or file amble-todo-file
-                     (and org-default-notes-file
-                          (file-exists-p org-default-notes-file) org-default-notes-file)
-                     (user-error "Set amble-todo-file or provide the user's inbox path")))
-         (b (let ((path (amble--local-path target)))
-              (unless (file-exists-p path) (user-error "Inbox does not exist; configure an existing Org inbox"))
-              (let ((enable-local-variables :safe) (enable-local-eval nil))
-                (find-file-noselect path)))))
-    (with-current-buffer b
-      (unless (derived-mode-p 'org-mode) (user-error "Target must be an Org file"))
-      (let ((was-modified (buffer-modified-p)) start)
-        (save-restriction
-          (widen)
-          (goto-char (point-max))
-          (atomic-change-group
-            (unless (bolp) (insert "\n"))
-            (setq start (point))
-            (insert "* TODO " (string-trim title) "\n")))
-        (undo-boundary)
-        (unless was-modified (save-buffer))
-        (pop-to-buffer b)
-        (goto-char start)
-        `((file . ,buffer-file-name) (title . ,(string-trim title))
-          (point . ,start) (saved . ,(if was-modified :false t)))))))
+  "Compatibility entry point: capture TITLE through zk's shared inbox."
+  (require 'amble-zk)
+  (amble-zk--require)
+  (when (and file (not (equal (expand-file-name file) (expand-file-name zk-inbox-file))))
+    (user-error "Tasks use zk-inbox-file; Amble has no separate TODO destination"))
+  (amble-zk-tool `((action . "add_task") (title . ,title))))
 
 (defun amble-org--templates ()
   "Return capture template names without exposing template bodies or targets."
@@ -81,7 +63,7 @@ Save when the target had no preexisting unsaved edits."
 (defun amble-org-tool (args)
   "Dispatch optional Org capabilities using ARGS."
   (pcase (alist-get 'action args)
-    ("templates" `((templates . ,(amble-org--templates)) (todo_file . ,amble-todo-file)))
+    ("templates" `((templates . ,(amble-org--templates))))
     ("capture"
      (unless (and (alist-get 'template args) (alist-get 'title args))
        (user-error "capture requires template and title"))
@@ -94,7 +76,7 @@ Save when the target had no preexisting unsaved edits."
 
 (amble-tools-register
  "emacs_org"
- "Org extension: templates lists existing capture keys. Prefer capture with an entry template and title; fails if input is needed. display shows an Org file with images. add_todo is a fallback for the configured inbox or an explicit existing Org file; saves only when no prior unsaved changes existed."
+ "Org document extension: templates lists capture keys; capture applies a generic entry template. display shows an Org file with images. For tasks, plans and schedules enable zk and use emacs_zk. add_todo is a compatibility alias that delegates to zk; it never writes to a separate inbox."
  '((action (type . "string") (enum . ["templates" "capture" "display" "add_todo"]))
    (template (type . "string")) (title (type . "string")) (file (type . "string")))
  '("action") #'amble-org-tool "org" "org")

@@ -16,9 +16,6 @@
 (declare-function amble--log "amble" (label text))
 
 (defgroup amble nil "Operate Emacs using natural language." :group 'applications)
-(defcustom amble-todo-file nil
-  "Default Org inbox.  Nil uses an existing `org-default-notes-file'."
-  :type '(choice (const nil) file))
 (defcustom amble-stale-minutes 60
   "Minimum idle age for cleaning a buffer."
   :type 'integer)

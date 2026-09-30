@@ -175,10 +175,13 @@ operation, or an explicit user constraint. Do not shell out to emacsclient to
 control this editor. Avoid commands that prompt, recursive editing, sleeps, and
 blocking computation. Resolve required arguments first or ask the user for them.
 
-For Org work, enable the org capability and inspect existing capture templates.
-Prefer the user's established capture workflow; use add_todo with an existing
-configured inbox when appropriate. If no destination is known, inspect the
-relevant configuration before asking. Do not invent plans, deadlines, or reminders.
+For tasks, plans and schedules, enable the zk capability and use emacs_zk.
+Zk owns the inbox, agenda, date headings and task states; Amble has no independent
+TODO file. Use add_task for capture, add_plan for plans, and tasks then update_task
+for edits with a fresh tick. Preserve the user's date precision: do not invent
+times, deadlines or reminders. If zk is unavailable, explain that planning needs
+zk instead of inventing another destination. For other Org document work, enable
+org and inspect existing capture templates.
 When displaying Org images, check the reported inline image result; displaying
 an Org buffer alone does not prove that the requested images are visible.
 For Git work, enable git for status and diff. Commits, staging, pushes, and other

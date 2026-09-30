@@ -1,6 +1,6 @@
 # Amble
 
-一个在 **运行中的 Emacs** 内的纯 Elisp 助手，支持自然对话和编辑器操作。它可以理解编辑器状态、发现已安装包的能力、查询文档、调用函数、组合 Elisp 操作、编辑未保存的文本并验证结果。Git、Org 和 TODO 是附带的便捷工具，能力边界由 Emacs 本身决定。
+一个在 **运行中的 Emacs** 内的纯 Elisp 助手，支持自然对话和编辑器操作。它可以理解编辑器状态、发现已安装包的能力、查询文档、调用函数、组合 Elisp 操作、编辑未保存的文本并验证结果。Git 和 Org 是附带的便捷工具；计划、日程与待办统一调用 zk，amble 不维护独立的 TODO 文件。
 
 ## 使用
 
@@ -22,14 +22,13 @@
 
 `:ensure nil` 避免再去 ELPA/MELPA 查找，`:vc` 仍会自动安装。首次安装取 main 的最新提交，之后可用 `M-x package-vc-upgrade RET amble` 更新，不会每次启动都拉取。
 
-启动 Emacs 前在其环境中设置 `EMACS_AMBLE_API_KEY`。Amble 从该变量读取密钥；不要把密钥写进 init.el 或仓库。终端启动的 Emacs 会继承 shell 环境，从 macOS 图标启动则需要让图形会话也获得该变量。可执行 `(and (getenv "EMACS_AMBLE_API_KEY") t)` 检查是否存在，不打印密钥。
+启动 Emacs 前在其环境中设置 `EMACS_AMBLE_API_KEY`。Amble 从该变量读取密钥；
 
 可选配置：
 
 ```elisp
 (setopt amble-reasoning-effort 'medium
         amble-reasoning-summary 'auto
-        amble-todo-file "~/org/inbox.org"
         amble-extra-instructions "请用中文简短回复，优先沿用我的现有 Emacs 配置。")
 ```
 
@@ -85,7 +84,7 @@ Amble 会话显示在工作 frame 上方的浮动 child frame 中，打开、隐
 | 观察 | `emacs_context` | 精简的当前缓冲区、选区、窗口、项目和后台任务；`detailed=true` 展开缓冲区列表 |
 | 观察 | `emacs_inspect` | 符号文档、参数、快捷键、mode；变量值需显式 `include_value=true` |
 | 观察 | `emacs_search_symbols` | 查找可用函数、命令、变量 |
-| 发现 | `emacs_capabilities` | 列出、启用或关闭 Org/Git 扩展 |
+| 发现 | `emacs_capabilities` | 列出、启用或关闭 Org/ZK/Git 扩展 |
 | 读取 | `emacs_find_files` | 在限定目录内查找文件名 |
 | 读取 | `emacs_search_text` | 搜索当前缓冲区、打开的缓冲区或项目，优先使用未保存文本 |
 | 读取 | `emacs_read` | 按位置、行号或选区读取缓冲区/文件，返回修改版本 `tick` |
@@ -98,7 +97,8 @@ Amble 会话显示在工作 frame 上方的浮动 child frame 中，打开、隐
 
 在 Org 缓冲区或 Git 工作目录发起任务时，会自动启用对应扩展；其他场景可用 `emacs_capabilities` 启用，下一次模型请求即可使用。新会话会清空已启用扩展，再按当前上下文选择。
 
-- `emacs_org`：发现现有 capture 模板、按模板记录、展示 Org 图片，以及向配置的 inbox 追加 TODO。优先使用 capture 模板；需要额外交互或立即结束的模板会拒绝自动填写，避免误提交。
+- `emacs_org`：发现现有 capture 模板、按模板记录与展示 Org 图片；旧 `add_todo` 入口兼容转发到 zk。
+- `emacs_zk`：读取任务、收集待办、创建计划、修改任务状态与日期，以及打开日程。存储与日期逻辑由 zk 提供；加载 zk 后自动启用，也可以手动启用 `zk` 扩展。任务进入 `zk-inbox-file`，计划进入 `zk-agenda-file`；日期仅使用用户指定的精度。
 - `emacs_git`：异步获取 Git status/diff 并展示原生输出；用 `emacs_job wait` 等结果。提交、暂存等写操作仍需用户明确要求后通过命令执行。
 
 ### 编辑与保存
@@ -189,3 +189,13 @@ Lisp 操作在 Emacs 主线程执行。15 秒超时是协作式的，不能强�
 - `amble-org.el`、`amble-git.el`：按需加载的扩展。
 
 更新后重启 Emacs，加载新代码并开始新会话。
+
+## ZK 联动测试
+
+在已安装 zk 的环境中，从 Amble 仓库运行：
+
+```sh
+emacs -Q --batch -L . -L ~/.emacs.d/elpa/zk -l tests/amble-zk-tests.el -f ert-run-tests-batch-and-exit
+```
+
+测试使用临时知识库，不调用模型或修改真实笔记。

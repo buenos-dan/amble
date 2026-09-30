@@ -10,7 +10,8 @@
 (defvar amble-tools--registry (make-hash-table :test 'equal))
 (defvar amble-tools--enabled nil)
 (defconst amble-tools--capabilities
-  '(("org" amble-org "Org display, capture templates and TODO inbox")
+  '(("org" amble-org "Org display and generic capture templates")
+    ("zk" amble-zk "Tasks, plans and schedules through zk")
     ("git" amble-git "Git status and diff as asynchronous jobs")))
 
 (defun amble-tools-register (name description fields required handler category &optional capability)
@@ -98,6 +99,7 @@ CAPABILITY, when present, enables lazy loading outside the core tool list."
 (defun amble-tools-select-context ()
   "Enable relevant optional capabilities from the invocation buffer."
   (with-current-buffer (amble--buffer nil)
+    (when (featurep 'zk) (amble-tools-capabilities '((action . "enable") (name . "zk"))))
     (when (derived-mode-p 'org-mode) (amble-tools-capabilities '((action . "enable") (name . "org"))))
     (when (and (not (file-remote-p default-directory))
                (locate-dominating-file default-directory ".git"))
@@ -200,7 +202,7 @@ CAPABILITY, when present, enables lazy loading outside the core tool list."
                       '((query (type . "string")) (kind (type . "string") (enum . ["command" "function" "variable" "all"]))) '("query")
                       (lambda (a) (amble-search-symbols (alist-get 'query a) (alist-get 'kind a))) "observe")
 (amble-tools-register "emacs_capabilities"
-                      "List optional capabilities and active tools. Enable org/git when needed; new tools appear in the next model request. Disable removes them from the active set."
+                      "List optional capabilities and active tools. Enable org/zk/git when needed; new tools appear in the next model request. Disable removes them from the active set."
                       '((action (type . "string") (enum . ["list" "enable" "disable"])) (name (type . "string"))) nil #'amble-tools-capabilities "observe")
 (amble-tools-register "emacs_find_files"
                       "Find file paths by substring within a local directory/project. Bounded traversal; ignores symlinks and generated directories. Narrow scope if truncated."
