@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.6.1
+;; Version: 0.6.2
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -555,7 +555,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
         (when (window-live-p w) (set-window-point w (point-max)))))
     (setq header-line-format
           '(:eval (format " Amble · %s · %s · C-c C-c send%s"
-                          (if amble--run-stats (amble--stats-text amble--run-stats) amble-model)
+                          amble-model
                           (cond (amble--waiting-job "等待后台任务")
                                 (amble--waiting-retry "等待重试")
                                 (amble--busy "working")
