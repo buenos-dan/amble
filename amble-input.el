@@ -13,7 +13,6 @@
 
 (defvar-local amble-input--prompt nil)
 (defvar-local amble-input--start nil)
-(defvar-local amble-input--notice nil)
 (defvar-local amble-input--history-index nil)
 (defvar-local amble-input--saved-draft nil)
 (defvar-local amble-input--internal nil)
@@ -58,11 +57,15 @@
     amble-cancel amble-new-session amble-keyboard-quit)
   "Global commands usable in the conversation without leaving its editing task.")
 
+(defun amble-input--notify (text)
+  "Show TEXT briefly in the echo area without logging it to Messages."
+  (let ((message-log-max nil))
+    (message "%s" text)))
+
 (defun amble-input--blocked-key ()
-  "Report an unrelated shortcut in the header, without opening Messages."
+  "Report an unrelated shortcut in the echo area."
   (interactive)
-  (setq amble-input--notice "Shortcut disabled here; Esc returns to work")
-  (force-mode-line-update))
+  (amble-input--notify "Shortcut disabled here; Esc returns to work"))
 
 (defun amble-input--editing-map (source &optional seen)
   "Copy only editing bindings from SOURCE, blocking all other keys.
@@ -171,9 +174,7 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
 (defun amble-input--edited (&rest _)
   "Track draft edits independently of new assistant output."
   (unless amble-input--internal
-    (cl-incf amble-input--revision)
-    (setq amble-input--notice nil)
-    (force-mode-line-update)))
+    (cl-incf amble-input--revision)))
 
 (defun amble-input-setup ()
   "Ensure this conversation ends with a writable draft, preserving its contents."
@@ -241,12 +242,12 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
   (interactive)
   (with-current-buffer (amble-input-buffer)
     (let ((buffer (current-buffer)) (text (amble-input--draft))
-          (revision amble-input--revision) accepted)
+          (revision amble-input--revision) accepted failure)
       (cond
        ((bound-and-true-p amble--busy)
-        (setq amble-input--notice "Still working; C-c C-k cancels"))
+        (amble-input--notify "Still working; C-c C-k cancels"))
        ((string-empty-p (string-trim text))
-        (setq amble-input--notice "Write a message after You"))
+        (amble-input--notify "Write a message after You"))
        (t
         ;; Remove the submitted draft before logging You/Agent entries above
         ;; it. Restore it on a failed start, without deleting newer user input.
@@ -254,7 +255,7 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
           (delete-region amble-input--start (point-max)))
         (condition-case err
             (progn (amble text) (setq accepted (not amble--last-error)))
-          (error (setq amble-input--notice (error-message-string err))))
+          (error (setq failure (error-message-string err))))
         (when (buffer-live-p buffer)
           (with-current-buffer buffer
             (if accepted
@@ -269,7 +270,7 @@ shortcuts.  Minibuffers and temporary input/search maps remain independent."
                   (goto-char amble-input--start)
                   (insert text)
                   (unless (= revision amble-input--revision) (insert "\n"))))
-              (setq amble-input--notice (or amble-input--notice "Request failed; draft kept")))))))
+              (amble-input--notify (or failure "Request failed; draft kept")))))))
       (force-mode-line-update))))
 
 (defun amble-input--replace-draft (text)

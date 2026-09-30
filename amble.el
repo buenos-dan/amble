@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.6.3
+;; Version: 0.6.4
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -510,6 +510,13 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 (define-derived-mode amble-session-mode text-mode "Amble"
   "Conversation and draft in one buffer. C-c C-c sends; RET inserts a newline."
   (setq-local truncate-lines nil word-wrap t)
+  (setq-local header-line-format
+              '(:eval (format " Amble · %s · %s · C-c C-c send"
+                              amble-model
+                              (cond (amble--waiting-job "等待后台任务")
+                                    (amble--waiting-retry "等待重试")
+                                    (amble--busy "working")
+                                    (t "ready")))))
   (amble-input-setup)
   (amble-input-setup-keys))
 
@@ -553,15 +560,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (when intermediate
         (amble--extend-process-section amble--process-section (1- (point-max)) label))
       (dolist (w following)
-        (when (window-live-p w) (set-window-point w (point-max)))))
-    (setq header-line-format
-          '(:eval (format " Amble · %s · %s · C-c C-c send%s"
-                          amble-model
-                          (cond (amble--waiting-job "等待后台任务")
-                                (amble--waiting-retry "等待重试")
-                                (amble--busy "working")
-                                (t "ready"))
-                          (if amble-input--notice (concat " · " amble-input--notice) ""))))))
+        (when (window-live-p w) (set-window-point w (point-max)))))))
 
 (defun amble-show ()
   "Show the conversation and focus its editable message input."
