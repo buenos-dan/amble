@@ -146,6 +146,36 @@ filter, not an execution sandbox: emacs_eval retains full Emacs authority."
             (user-error "File has no live buffer; use emacs_read or open it first")))
     (amble--buffer (alist-get 'buffer args))))
 
+(defun amble--object-key (key)
+  "Return the JSON key for Lisp KEY, removing keyword colons."
+  (cond ((keywordp key) (substring (symbol-name key) 1))
+        ((symbolp key) (symbol-name key))
+        (t key)))
+
+(defun amble--plist-shape-p (value)
+  "Whether VALUE is a nonempty proper keyword property list."
+  (and (consp value) (proper-list-p value)
+       (zerop (% (length value) 2))
+       (cl-loop for tail on value by #'cddr always (keywordp (car tail)))))
+
+(defun amble--object-pairs (value)
+  "Recognize unambiguous property/association lists without losing keys.
+Lists of records remain arrays.  Duplicate JSON keys also remain arrays,
+instead of silently replacing earlier entries in a hash table."
+  (let ((pairs
+         (cond
+          ((amble--plist-shape-p value)
+           (cl-loop for (key item) on value by #'cddr collect (cons key item)))
+          ((and (consp value) (proper-list-p value)
+                (cl-every (lambda (entry)
+                            (and (consp entry)
+                                 (or (symbolp (car entry)) (stringp (car entry)))
+                                 (not (amble--plist-shape-p entry)))) value))
+           value))))
+    (when pairs
+      (let ((keys (mapcar (lambda (pair) (amble--object-key (car pair))) pairs)))
+        (when (= (length keys) (length (delete-dups (copy-sequence keys)))) pairs)))))
+
 (defun amble--value (value &optional depth)
   "Convert Lisp VALUE into bounded JSON-compatible data."
   (let ((depth (or depth 0)))
@@ -163,14 +193,16 @@ filter, not an execution sandbox: emacs_eval retains full Emacs authority."
                      (cl-incf n))) value)
         result))
      ((or (vectorp value) (and (listp value) (proper-list-p value)))
-      (if (and (consp value)
-               (cl-every (lambda (x) (and (consp x) (or (symbolp (car x)) (stringp (car x))))) value))
+      (if-let* ((pairs (and (listp value) (amble--object-pairs value))))
           (let ((result (make-hash-table :test 'equal)))
-            (dolist (item (seq-take value 100))
-              (puthash (format "%s" (car item)) (amble--value (cdr item) (1+ depth)) result))
+            (dolist (item (seq-take pairs 100))
+              (puthash (amble--object-key (car item)) (amble--value (cdr item) (1+ depth)) result))
             result)
         (vconcat (mapcar (lambda (v) (amble--value v (1+ depth)))
                          (seq-take (append value nil) 100)))))
+     ((consp value)
+      (vector (amble--value (car value) (1+ depth))
+              (amble--value (cdr value) (1+ depth))))
      (t (let ((print-length 20) (print-level 3) (print-circle t))
           (prin1-to-string value))))))
 

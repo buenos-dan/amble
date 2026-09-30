@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.5.2
+;; Version: 0.5.3
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -49,10 +49,67 @@ Respect Retry-After, but stop if it exceeds the 60-second wait limit."
 (defvar amble--waiting-retry nil)
 (defvar amble--waiting-job nil)
 (defvar amble--steps 0)
+(defvar amble--run-stats nil
+  "Metrics for the latest question, shared with its transcript headings.")
 (defvar amble--last-error nil)
 (defvar amble--history nil)
 (defvar amble--finish-hook nil
   "Hook called after a task finishes, fails or is cancelled.")
+
+(defun amble--stats-text (stats)
+  "Format logical model turns, tool calls and model time from STATS."
+  (let ((turns (plist-get stats :turns)) (calls (plist-get stats :tools))
+        (seconds (plist-get stats :seconds)))
+    (when-let* ((start (plist-get stats :request-started)))
+      (setq seconds (+ seconds (max 0 (- (float-time) start)))))
+    (format "%d turn%s · %d tool call%s · %.1fs"
+            turns (if (= turns 1) "" "s") calls (if (= calls 1) "" "s") seconds)))
+
+(defun amble--update-process-caption (section)
+  "Refresh SECTION's metrics without changing its expanded state."
+  (when-let* ((button (button-at (overlay-get section 'amble-header))))
+    (let ((stats (overlay-get section 'amble-run-stats))
+          (calls (overlay-get section 'amble-call-count)))
+      (button-put button 'amble-caption
+                  (concat (if stats (amble--stats-text stats)
+                            (format "%d tool call%s" calls (if (= calls 1) "" "s")))
+                          (when (overlay-get section 'amble-has-error) " · failed")))
+      (button-put button 'help-echo
+                  "TAB/RET/click: details. Retries do not add turns. Seconds include request retries, but exclude backoff and jobs.")
+      (button-put button 'display
+                  (concat (if (overlay-get section 'invisible) "▶ " "▼ ")
+                          (button-get button 'amble-caption))))))
+
+(defun amble--refresh-stats (stats)
+  "Update all transcript sections associated with STATS."
+  (when-let* ((buffer (get-buffer "*amble*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (dolist (overlay (overlays-in (point-min) (point-max)))
+          (when (and (overlay-get overlay 'amble-process)
+                     (eq (overlay-get overlay 'amble-run-stats) stats))
+            (amble--update-process-caption overlay))))))
+  (force-mode-line-update t))
+
+(defun amble--observe-request (stats event)
+  "Update STATS from transport EVENT, ignoring events from older questions."
+  (when (eq stats amble--run-stats)
+    (pcase (alist-get 'event event)
+      ("request-started"
+       (when (= (alist-get 'attempt event) 1)
+         (cl-incf (plist-get stats :turns)))
+       (setf (plist-get stats :request-started) (float-time)))
+      ("request-finished"
+       (let ((seconds (alist-get 'seconds event)) (status (alist-get 'status event))
+             (attempt (alist-get 'attempt event)))
+         (cl-incf (plist-get stats :seconds) seconds)
+         (setf (plist-get stats :request-started) nil)
+         (amble--log (format "Turn %d%s" (plist-get stats :turns)
+                             (if (> attempt 1) (format " · retry %d" (1- attempt)) ""))
+                     (format "%.1fs · %s" seconds
+                             (if status (format "HTTP %d" status)
+                               (alist-get 'outcome event))) t))))
+    (amble--refresh-stats stats)))
 
 (defconst amble--instructions
   "You are Amble, a capable, considerate assistant working inside the user's live
@@ -289,20 +346,21 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
   (let* ((body (make-overlay body-start body-start nil nil nil))
          (button (make-text-button
                   start (1- body-start) 'type 'amble-details-button
-                  'amble-entry "执行过程" 'amble-process-header t
+                  'amble-entry "Activity" 'amble-process-header t
                   'amble-details body 'face 'font-lock-comment-face)))
     (overlay-put body 'amble-header (copy-marker start t))
     (overlay-put body 'amble-process t)
     (overlay-put body 'amble-call-count 0)
+    (overlay-put body 'amble-run-stats (get-text-property start 'amble-run-stats))
     (overlay-put body 'isearch-open-invisible #'amble--reveal-details)
     (amble--set-details-folded button t)
     body))
 
-(defun amble--insert-process-section ()
+(defun amble--insert-process-section (&optional stats)
   "Insert a collapsed execution heading at point and return its overlay."
   (let ((start (point)))
-    (insert (propertize "执行过程\n" 'amble-entry "执行过程"
-                        'amble-process-header t 'rear-nonsticky t))
+    (insert (propertize "Activity\n" 'amble-entry "Activity"
+                        'amble-process-header t 'amble-run-stats stats 'rear-nonsticky t))
     (amble--make-process-section start (point))))
 
 (defun amble--extend-process-section (section end label)
@@ -313,12 +371,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
                  (1+ (overlay-get section 'amble-call-count))))
   (when (string-prefix-p "Tool error" label)
     (overlay-put section 'amble-has-error t))
-  (let ((button (button-at (overlay-get section 'amble-header))))
-    (button-put button 'amble-caption
-                (format "执行过程 · %d 次工具调用%s"
-                        (overlay-get section 'amble-call-count)
-                        (if (overlay-get section 'amble-has-error) " · 有失败步骤" "")))
-    (amble--set-details-folded button (overlay-get section 'invisible))))
+  (amble--update-process-caption section))
 
 (defun amble--intermediate-entry-p (entry following)
   "Identify process ENTRY, including unmarked commentary in older logs."
@@ -336,7 +389,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 
 (defun amble--group-process-entries (entries)
   "Group intermediate ENTRIES, keeping questions and final answers visible."
-  (let (section)
+  (let (section stats)
     (while entries
       (let* ((entry (pop entries))
              (start (marker-position (car entry)))
@@ -344,16 +397,20 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
              (label (nth 2 entry))
              (end (1- (if entries (marker-position (caar entries)) (point-max)))))
         (cond
+         ((equal label "You")
+          (setq section nil stats (get-text-property start 'amble-run-stats)))
+         ((equal label "New session") (setq section nil stats nil))
          ((get-text-property start 'amble-process-header)
           (setq section (or (when-let* ((button (button-at start)))
                               (button-get button 'amble-details))
                             (amble--make-process-section start body-start)))
           (overlay-put section 'amble-call-count 0)
+          (overlay-put section 'amble-run-stats (or (get-text-property start 'amble-run-stats) stats))
           (overlay-put section 'amble-has-error nil))
          ((amble--intermediate-entry-p entry entries)
           (unless section
             (goto-char start)
-            (setq section (amble--insert-process-section))
+            (setq section (amble--insert-process-section stats))
             ;; Inserting the heading moves the following entries' markers.
             (setq end (1- (if entries (marker-position (caar entries)) (point-max)))))
           (amble--extend-process-section section end label))
@@ -453,11 +510,12 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (if intermediate
           (unless (and (overlayp amble--process-section)
                        (overlay-buffer amble--process-section))
-            (setq amble--process-section (amble--insert-process-section)))
+            (setq amble--process-section (amble--insert-process-section amble--run-stats)))
         (setq amble--process-section nil))
       (let ((start (point)) body-start)
         (insert (propertize (concat label "\n") 'face 'font-lock-keyword-face
                             'amble-entry label 'amble-intermediate intermediate
+                            'amble-run-stats (and (equal label "You") amble--run-stats)
                             'rear-nonsticky t))
         (setq body-start (point))
         (insert text "\n\n")
@@ -467,8 +525,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (dolist (w following)
         (when (window-live-p w) (set-window-point w (point-max)))))
     (setq header-line-format
-          '(:eval (format " Amble · %s · %s  |  TAB details · RET ask · C-c C-k cancel"
-                          amble-model
+          '(:eval (format " Amble · %s · %s"
+                          (if amble--run-stats (amble--stats-text amble--run-stats) amble-model)
                           (cond (amble--waiting-job "等待后台任务")
                                 (amble--waiting-retry "等待重试")
                                 (amble--busy "working")
@@ -521,18 +579,20 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
     (condition-case err
         (progn
           (amble-modelhub-cancel amble--request-handle)
-          (setq amble--request-handle
-                (amble-modelhub-start
-                 `((endpoint . ,amble-endpoint) (model . ,amble-model)
-                   (max_output_tokens . ,amble-max-tokens) (timeout . ,amble-http-timeout)
-                   (max_retries . ,amble-rate-limit-retries)
-                   (reasoning . ,(append
-                                  `((effort . ,(symbol-name amble-reasoning-effort)))
-                                  (when amble-reasoning-summary
-                                    `((summary . ,(symbol-name amble-reasoning-summary))))))
-                   (tools . ,(amble-tool-specs))
-                   (input . ,(vconcat amble--messages)))
-                 #'amble--event)))
+          (let ((stats amble--run-stats))
+            (setq amble--request-handle
+                  (amble-modelhub-start
+                   `((endpoint . ,amble-endpoint) (model . ,amble-model)
+                     (max_output_tokens . ,amble-max-tokens) (timeout . ,amble-http-timeout)
+                     (max_retries . ,amble-rate-limit-retries)
+                     (reasoning . ,(append
+                                    `((effort . ,(symbol-name amble-reasoning-effort)))
+                                    (when amble-reasoning-summary
+                                      `((summary . ,(symbol-name amble-reasoning-summary))))))
+                     (tools . ,(amble-tool-specs))
+                     (input . ,(vconcat amble--messages)))
+                   #'amble--event
+                   (when stats (lambda (event) (amble--observe-request stats event)))))))
       (quit (amble-cancel) (signal 'quit nil))
       (error (amble--fail (error-message-string err))))))
 
@@ -555,6 +615,9 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 (defun amble--tool-call (call handle remaining)
   "Execute CALL for HANDLE, continuing REMAINING calls after a job wait."
   (let ((name (gethash "name" call)) (raw (gethash "arguments" call)) result success)
+    (when amble--run-stats
+      (cl-incf (plist-get amble--run-stats :tools))
+      (amble--refresh-stats amble--run-stats))
     (amble--log (concat "Tool · " name) raw)
     (condition-case err
         (let ((inhibit-message t) (message-log-max nil)
@@ -637,7 +700,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
     (setq amble--messages
           (list `((role . "system")
                   (content . ,(concat amble--instructions "\n" amble-extra-instructions))))))
-  (setq amble--busy t amble--steps 0 amble--last-error nil)
+  (setq amble--busy t amble--steps 0 amble--last-error nil
+        amble--run-stats (list :turns 0 :tools 0 :seconds 0.0 :request-started nil))
   (amble--log "You" prompt)
   (condition-case err
       (progn
@@ -673,7 +737,7 @@ Completed editor actions remain in place. Conversation is reset to avoid replay.
   "Start a fresh conversation without modifying editor buffers."
   (interactive)
   (amble-cancel)
-  (setq amble-tools--enabled nil)
+  (setq amble-tools--enabled nil amble--run-stats nil)
   (amble--log "New session" "Conversation cleared. Your editor state is unchanged."))
 
 (defvar amble-mode-map

@@ -17,9 +17,9 @@
 (require 'time-date)
 
 (cl-defstruct (amble-modelhub--request (:constructor amble-modelhub--make))
-  data key endpoint callback (active t) (started (float-time))
+  data key endpoint callback observer (active t) (started (float-time))
   buffer timer attempt event delivery recovered-input
-  (retry-count 0) retry-timer notice-timer)
+  (retry-count 0) retry-timer notice-timer (attempt-count 0))
 
 (defun amble-modelhub--json (value)
   "Encode VALUE as multibyte JSON text, preserving objects, arrays and booleans.
@@ -131,14 +131,28 @@ items are omitted; no completed Emacs tool is executed again by this retry."
         (amble-modelhub--post handle (amble-modelhub--payload handle))
         t))))
 
-(defun amble-modelhub--close (handle)
+(defun amble-modelhub--observe (handle event)
+  "Report request telemetry EVENT to HANDLE's optional observer.
+Telemetry must not interrupt network processing or disclose request content."
+  (when-let* ((observer (amble-modelhub--request-observer handle)))
+    (let ((inhibit-message t) (message-log-max nil))
+      (condition-case nil (funcall observer event) (error nil)))))
+
+(defun amble-modelhub--close (handle &optional outcome status)
   "Stop HANDLE's current HTTP attempt and dispose of its private buffer."
   (let ((buffer (amble-modelhub--request-buffer handle))
-        (timer (amble-modelhub--request-timer handle)))
+        (timer (amble-modelhub--request-timer handle))
+        (attempt (amble-modelhub--request-attempt handle)))
     (setf (amble-modelhub--request-attempt handle) nil
           (amble-modelhub--request-buffer handle) nil
           (amble-modelhub--request-timer handle) nil)
     (when (timerp timer) (cancel-timer timer))
+    (when attempt
+      (amble-modelhub--observe
+       handle `((event . "request-finished")
+                (attempt . ,(amble-modelhub--request-attempt-count handle))
+                (seconds . ,(max 0 (- (float-time) (amble-modelhub--request-started handle))))
+                (outcome . ,(or outcome "cancelled")) (status . ,status))))
     (when (buffer-live-p buffer)
       ;; url.el detaches the process from its buffer before invoking us.
       (when-let* ((process (or (get-buffer-process buffer)
@@ -242,6 +256,7 @@ items are omitted; no completed Emacs tool is executed again by this retry."
           (amble-modelhub--request-recovered-input handle) nil
           (amble-modelhub--request-retry-timer handle) nil
           (amble-modelhub--request-notice-timer handle) nil
+          (amble-modelhub--request-observer handle) nil
           (amble-modelhub--request-callback handle) nil)))
 
 (defun amble-modelhub--deliver (handle)
@@ -266,9 +281,9 @@ items are omitted; no completed Emacs tool is executed again by this retry."
           (amble-modelhub--request-delivery handle)
           (run-at-time 0 nil #'amble-modelhub--deliver handle))))
 
-(defun amble-modelhub--error (handle message)
+(defun amble-modelhub--error (handle message &optional outcome)
   "Close HANDLE's network operation and queue a redacted error MESSAGE."
-  (amble-modelhub--close handle)
+  (amble-modelhub--close handle (or outcome "error"))
   (amble-modelhub--emit handle `((event . "error")
                                 (message . ,(amble-modelhub--redact handle message)))))
 
@@ -278,7 +293,8 @@ items are omitted; no completed Emacs tool is executed again by this retry."
              (eq attempt (amble-modelhub--request-attempt handle)))
     (amble-modelhub--error
      handle (format "ModelHub request timed out after %.1fs"
-                    (- (float-time) (amble-modelhub--request-started handle))))))
+                    (- (float-time) (amble-modelhub--request-started handle)))
+     "timeout")))
 
 (defun amble-modelhub--network-error (handle err)
   "Report network ERR without dumping an HTTP request, headers or body."
@@ -375,7 +391,7 @@ No tool is dispatched unless the entire response is complete and valid."
                        (decode-coding-string
                         (buffer-substring-no-properties url-http-end-of-headers (point-max))
                         'utf-8-unix))))
-          (amble-modelhub--close handle)
+          (amble-modelhub--close handle (if (integerp code) "http" "connection error") code)
           (cond
            ((eq code 429)
             (amble-modelhub--rate-limit handle body retry-after))
@@ -418,27 +434,32 @@ No tool is dispatched unless the entire response is complete and valid."
           (run-at-time (or (alist-get 'timeout (amble-modelhub--request-data handle)) 120)
                        nil #'amble-modelhub--timeout handle attempt))
     (condition-case err
-        (let ((buffer (url-retrieve url #'amble-modelhub--response
-                                    (list handle attempt) t t)))
-          ;; A mocked or unusually fast URL callback may have already finished.
-          (when (eq attempt (amble-modelhub--request-attempt handle))
-            (unless (buffer-live-p buffer) (error "Could not start ModelHub request"))
-            (setf (amble-modelhub--request-buffer handle) buffer)
-            (with-current-buffer buffer
-              (setq-local url-debug nil url-history-track nil url-automatic-caching nil
-                          url-http-no-retry t url-show-status nil)
-              (rename-buffer " *amble-http*" t)
-              (when-let* ((process (get-buffer-process buffer)))
-                (set-process-query-on-exit-flag process nil)
-                (amble-modelhub--guard-process handle attempt process)))))
+        (progn
+          (cl-incf (amble-modelhub--request-attempt-count handle))
+          (amble-modelhub--observe
+           handle `((event . "request-started")
+                    (attempt . ,(amble-modelhub--request-attempt-count handle))))
+          (let ((buffer (url-retrieve url #'amble-modelhub--response
+                                      (list handle attempt) t t)))
+            ;; A mocked or unusually fast URL callback may have already finished.
+            (when (eq attempt (amble-modelhub--request-attempt handle))
+              (unless (buffer-live-p buffer) (error "Could not start ModelHub request"))
+              (setf (amble-modelhub--request-buffer handle) buffer)
+              (with-current-buffer buffer
+                (setq-local url-debug nil url-history-track nil url-automatic-caching nil
+                            url-http-no-retry t url-show-status nil)
+                (rename-buffer " *amble-http*" t)
+                (when-let* ((process (get-buffer-process buffer)))
+                  (set-process-query-on-exit-flag process nil)
+                  (amble-modelhub--guard-process handle attempt process))))))
       (error (amble-modelhub--network-error handle err))
       (quit (amble-modelhub-cancel handle) (signal 'quit nil)))))
 
-(defun amble-modelhub-start (data callback)
+(defun amble-modelhub-start (data callback &optional observer)
   "Send Responses request DATA using EMACS_AMBLE_API_KEY; return a handle.
 CALLBACK receives (HANDLE EVENT) asynchronously.  DATA is an alist containing
 endpoint, model, input, tools, reasoning, max_output_tokens, timeout and
-max_retries."
+max_retries.  OBSERVER receives request-started/request-finished telemetry."
   (let ((endpoint (amble-modelhub--endpoint (alist-get 'endpoint data)))
         (retries (or (alist-get 'max_retries data) 3))
         (timeout (or (alist-get 'timeout data) 120)))
@@ -447,7 +468,7 @@ max_retries."
       (error "Rate-limit retries must be an integer from 0 to 10"))
     (let ((handle (amble-modelhub--make
                    :data data :key (amble-modelhub--read-key)
-                   :endpoint endpoint :callback callback)))
+                   :endpoint endpoint :callback callback :observer observer)))
       (condition-case err
           (amble-modelhub--post handle (amble-modelhub--payload handle))
         (error (amble-modelhub--error handle (error-message-string err))))
