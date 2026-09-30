@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.6.0
+;; Version: 0.6.1
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -84,7 +84,7 @@ Respect Retry-After, but stop if it exceeds the 60-second wait limit."
   "Update all transcript sections associated with STATS."
   (when-let* ((buffer (get-buffer "*amble*")))
     (with-current-buffer buffer
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t) (amble-input--internal t))
         (dolist (overlay (overlays-in (point-min) (point-max)))
           (when (and (overlay-get overlay 'amble-process)
                      (eq (overlay-get overlay 'amble-run-stats) stats))
@@ -253,20 +253,36 @@ user's work context. Finish with a brief, direct reply in the user's language:
 what was done or found, whether changes were saved when relevant, and any remaining
 limitation or necessary next step. Distinguish verified facts from assumptions.")
 
-(defvar amble-session-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'amble)
-    (define-key map (kbd "C-c C-c") #'amble-input-send)
-    (define-key map (kbd "C-c C-k") #'amble-cancel)
-    (define-key map (kbd "C-c C-n") #'amble-new-session)
-    map))
-
-(define-key amble-session-mode-map (kbd "i") #'amble-show)
+(defvar amble-session-mode-map (make-sparse-keymap))
+(set-keymap-parent amble-session-mode-map text-mode-map)
+;; Remove the old special-mode character shortcuts: q/i are ordinary input.
+(define-key amble-session-mode-map (kbd "q") nil)
+(define-key amble-session-mode-map (kbd "i") nil)
+(define-key amble-session-mode-map (kbd "RET") #'amble-input-return)
 (define-key amble-session-mode-map (kbd "C-c C-c") #'amble-input-send)
-(define-key amble-session-mode-map (kbd "TAB") #'amble-toggle-details)
-(define-key amble-session-mode-map [tab] #'amble-toggle-details)
-(define-key amble-session-mode-map (kbd "q") #'amble-hide)
+(define-key amble-session-mode-map (kbd "C-c C-k") #'amble-cancel)
+(define-key amble-session-mode-map (kbd "C-c C-n") #'amble-new-session)
+(define-key amble-session-mode-map (kbd "C-c C-i") #'amble-input-focus)
+(define-key amble-session-mode-map (kbd "M-p") #'amble-input-previous)
+(define-key amble-session-mode-map (kbd "M-n") #'amble-input-next)
+(define-key amble-session-mode-map (kbd "TAB") #'amble-input-tab)
+(define-key amble-session-mode-map [tab] #'amble-input-tab)
 (define-key amble-session-mode-map (kbd "<escape>") #'amble-hide)
+
+(defun amble-input-return ()
+  "Insert a newline in the draft, activate a heading or return to the draft."
+  (interactive)
+  (if (and (amble-input--ready-p) (>= (point) amble-input--start))
+      (newline)
+    (if-let* ((button (button-at (point)))) (button-activate button)
+      (amble-input-focus))))
+
+(defun amble-input-tab ()
+  "Indent in the draft or toggle transcript details."
+  (interactive)
+  (if (and (amble-input--ready-p) (>= (point) amble-input--start))
+      (indent-for-tab-command)
+    (amble-toggle-details)))
 
 (defvar-local amble--display-ready nil)
 (defvar-local amble--process-section nil)
@@ -279,7 +295,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 (defun amble--set-details-folded (button folded)
   "Set BUTTON's detail visibility according to FOLDED."
   (let ((body (button-get button 'amble-details))
-        (inhibit-read-only t))
+        (inhibit-read-only t) (amble-input--internal t))
     (when (and folded (<= (overlay-start body) (point))
                (< (point) (overlay-end body)))
       (goto-char (button-start button)))
@@ -443,8 +459,14 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (amble--set-details-folded button (not (string-prefix-p "Tool error" label))))))
 
 (defun amble-refresh-display ()
-  "Format JSON and add collapsible details to the existing transcript."
+  "Rebuild transcript folding and formatting without reading the unsent draft."
   (interactive)
+  (when-let* ((buffer (get-buffer "*amble*")))
+    (with-current-buffer buffer
+      (amble-input--with-history #'amble--refresh-transcript))))
+
+(defun amble--refresh-transcript ()
+  "Format JSON and add collapsible details to the existing transcript."
   (when-let* ((buffer (get-buffer "*amble*")))
     (with-current-buffer buffer
       (add-to-invisibility-spec 'amble-details)
@@ -485,20 +507,25 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
             (set-marker (nth 1 entry) nil)))
         (setq amble--display-ready t)))))
 
-(define-derived-mode amble-session-mode special-mode "Amble"
-  "Read-only transcript. TAB toggles details; RET or i focuses the message input."
-  (setq-local truncate-lines nil)
-  (setq-local word-wrap t))
+(define-derived-mode amble-session-mode text-mode "Amble"
+  "Conversation and draft in one buffer. C-c C-c sends; RET inserts a newline."
+  (setq-local truncate-lines nil word-wrap t)
+  (amble-input-setup))
 
 (defun amble--log (label text &optional intermediate)
+  "Insert a transcript entry above the draft, preserving typing and history view."
+  (with-current-buffer (amble-input-buffer)
+    (unless amble--display-ready (amble-refresh-display))
+    (amble-input--with-history
+     (lambda () (amble--log-entry label text intermediate)))))
+
+(defun amble--log-entry (label text &optional intermediate)
   "Append LABEL and TEXT; group INTERMEDIATE text with the turn's tools."
   (with-current-buffer (get-buffer-create "*amble*")
-    (unless (derived-mode-p 'amble-session-mode) (amble-session-mode))
-    (unless amble--display-ready (amble-refresh-display))
     (let ((inhibit-read-only t)
           (following (cl-remove-if-not
                       (lambda (w) (and (window-live-p w)
-                                       (>= (window-point w) (1- (point-max)))))
+                                       (<= (1- (point-max)) (window-point w) (point-max))))
                       (get-buffer-window-list (current-buffer) nil t))))
       (goto-char (point-max))
       (when (amble--tool-entry-p label)
@@ -527,12 +554,13 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (dolist (w following)
         (when (window-live-p w) (set-window-point w (point-max)))))
     (setq header-line-format
-          '(:eval (format " Amble · %s · %s"
+          '(:eval (format " Amble · %s · %s · C-c C-c send%s"
                           (if amble--run-stats (amble--stats-text amble--run-stats) amble-model)
                           (cond (amble--waiting-job "等待后台任务")
                                 (amble--waiting-retry "等待重试")
                                 (amble--busy "working")
-                                (t "ready")))))))
+                                (t "ready"))
+                          (if amble-input--notice (concat " · " amble-input--notice) ""))))))
 
 (defun amble-show ()
   "Show the conversation and focus its editable message input."
@@ -775,7 +803,9 @@ Completed editor actions remain in place. Conversation is reset to avoid replay.
 (advice-remove 'amble-show 'amble-popup--remember-origin)
 
 (when (get-buffer "*amble*")
+  (with-current-buffer "*amble*" (amble-session-mode))
   (amble-refresh-display))
+(amble-input-migrate)
 
 (provide 'amble)
 ;;; amble.el ends here
