@@ -87,7 +87,7 @@ filter, not an execution sandbox: emacs_eval retains full Emacs authority."
 (defun amble--context-buffer-p (buffer)
   "Whether BUFFER can appear in automatic context."
   (and (not (string-prefix-p " " (buffer-name buffer)))
-       (not (equal (buffer-name buffer) "*amble*"))
+       (not (member (buffer-name buffer) '("*amble*" "*amble-input*")))
        (or (null amble-context-buffer-predicate)
            (funcall amble-context-buffer-predicate buffer))))
 

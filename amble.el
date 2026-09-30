@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.5.3
+;; Version: 0.6.0
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -256,11 +256,13 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 (defvar amble-session-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'amble)
-    (define-key map (kbd "C-c C-c") #'amble)
+    (define-key map (kbd "C-c C-c") #'amble-input-send)
     (define-key map (kbd "C-c C-k") #'amble-cancel)
     (define-key map (kbd "C-c C-n") #'amble-new-session)
     map))
 
+(define-key amble-session-mode-map (kbd "i") #'amble-show)
+(define-key amble-session-mode-map (kbd "C-c C-c") #'amble-input-send)
 (define-key amble-session-mode-map (kbd "TAB") #'amble-toggle-details)
 (define-key amble-session-mode-map [tab] #'amble-toggle-details)
 (define-key amble-session-mode-map (kbd "q") #'amble-hide)
@@ -484,7 +486,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
         (setq amble--display-ready t)))))
 
 (define-derived-mode amble-session-mode special-mode "Amble"
-  "Agent transcript. TAB toggles details; RET asks or activates a heading."
+  "Read-only transcript. TAB toggles details; RET or i focuses the message input."
   (setq-local truncate-lines nil)
   (setq-local word-wrap t))
 
@@ -533,7 +535,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
                                 (t "ready")))))))
 
 (defun amble-show ()
-  "Show the conversation and executed tool calls."
+  "Show the conversation and focus its editable message input."
   (interactive)
   (unless (get-buffer "*amble*")
     (amble--log "Amble" "Ask about or operate your live Emacs. Use M-x amble from any buffer."))
@@ -685,12 +687,13 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
       (error (amble--fail (error-message-string err))))))
 
 ;;;###autoload
-(defun amble (prompt)
-  "Ask PROMPT about or operate the current Emacs environment."
-  (interactive
-   (progn
-     (amble-frame-capture-origin)
-     (list (read-string "Amble: " nil 'amble--history))))
+(defun amble (&optional prompt)
+  "Open the message input, or submit PROMPT when called from Lisp."
+  (interactive)
+  (if prompt (amble--submit-request prompt) (amble-show)))
+
+(defun amble--submit-request (prompt)
+  "Submit PROMPT with the captured work context, without prompting for input."
   (when amble--busy (user-error "An agent task is running; C-g cancels it"))
   (when (string-empty-p (string-trim prompt)) (user-error "Enter a request"))
   (amble-frame-capture-origin)
