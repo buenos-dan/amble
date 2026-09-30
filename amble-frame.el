@@ -51,6 +51,27 @@ An active request keeps its original work target even if the panel is reopened."
       (set-frame-size amble-frame--child width height t)
       (set-frame-position amble-frame--child (max 0 (- pw width 28)) 35))))
 
+(defun amble-frame--conversation-window (frame buffer)
+  "Find a live leaf window in FRAME and ensure it displays BUFFER.
+The frame root can be an internal layout node after a help buffer splits it."
+  (unless (frame-live-p frame)
+    (user-error "The Amble frame was closed; open the conversation again"))
+  (unless (buffer-live-p buffer)
+    (user-error "The Amble buffer was closed; open the conversation again"))
+  (let ((window (or (get-buffer-window buffer frame)
+                    (let ((selected (frame-selected-window frame)))
+                      (and (window-live-p selected)
+                           (not (window-minibuffer-p selected)) selected))
+                    (cl-find-if #'window-live-p (window-list frame 'no-minibuf)))))
+    (unless (window-live-p window)
+      (user-error "The Amble frame has no usable conversation window"))
+    (unless (eq (window-buffer window) buffer)
+      (set-window-dedicated-p window nil)
+      (set-window-buffer window buffer)
+      (set-window-point window (with-current-buffer buffer (point-max))))
+    (set-window-dedicated-p window t)
+    window))
+
 (defun amble-frame-display (buffer &optional focus)
   "Show BUFFER in a child frame; FOCUS selects it for interaction."
   (amble-frame-capture-origin)
@@ -58,9 +79,11 @@ An active request keeps its original work target even if the panel is reopened."
     (unless (display-graphic-p parent)
       (user-error "Amble's floating conversation requires a graphical Emacs frame"))
     (dolist (window (get-buffer-window-list "*amble*" nil parent))
-      (when (window-parameter window 'window-side) (quit-window nil window)))
+      (when (and (window-live-p window) (window-parameter window 'window-side))
+        (quit-window nil window)))
     (unless (and (frame-live-p amble-frame--child)
-                 (eq amble-frame--parent parent))
+                 (eq amble-frame--parent parent)
+                 (eq (frame-parent amble-frame--child) parent))
       (when (frame-live-p amble-frame--child) (delete-frame amble-frame--child t))
       (setq amble-frame--parent parent)
       (setq amble-frame--child
@@ -79,17 +102,14 @@ An active request keeps its original work target even if the panel is reopened."
                (min-width . 20) (min-height . 8)
                (width . 60) (height . 24))))
       (amble-frame--fit parent))
-    (let ((window (frame-root-window amble-frame--child)))
-      (unless (eq (window-buffer window) buffer)
-        (set-window-dedicated-p window nil)
-        (set-window-buffer window buffer)
-        (set-window-point window (with-current-buffer buffer (point-max)))
-        (set-window-dedicated-p window t))
-      (make-frame-visible amble-frame--child)
+    (let ((child amble-frame--child))
+      (amble-frame--conversation-window child buffer)
+      (make-frame-visible child)
       (when focus
-        (select-frame-set-input-focus amble-frame--child)
-        (select-window window))
-      window)))
+        (select-frame-set-input-focus child)
+        ;; Focus and visibility hooks may replace or rearrange the leaf windows.
+        (select-window (amble-frame--conversation-window child buffer)))
+      (amble-frame--conversation-window child buffer))))
 
 (defun amble-frame-display-buffer (buffer _alist)
   "Route display-buffer requests for BUFFER into the floating conversation."

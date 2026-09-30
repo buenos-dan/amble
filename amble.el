@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.5.0
+;; Version: 0.5.1
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -438,7 +438,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
     (unless amble--display-ready (amble-refresh-display))
     (let ((inhibit-read-only t)
           (following (cl-remove-if-not
-                      (lambda (w) (>= (window-point w) (1- (point-max))))
+                      (lambda (w) (and (window-live-p w)
+                                       (>= (window-point w) (1- (point-max)))))
                       (get-buffer-window-list (current-buffer) nil t))))
       (goto-char (point-max))
       (when (amble--tool-entry-p label)
@@ -463,7 +464,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
         (amble--fold-entry start body-start (1- (point)) label))
       (when intermediate
         (amble--extend-process-section amble--process-section (1- (point-max)) label))
-      (dolist (w following) (set-window-point w (point-max))))
+      (dolist (w following)
+        (when (window-live-p w) (set-window-point w (point-max)))))
     (setq header-line-format
           '(:eval (format " Amble · %s · %s  |  TAB details · RET ask · C-c C-k cancel"
                           amble-model
