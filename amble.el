@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.6.2
+;; Version: 0.6.3
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -510,7 +510,8 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
 (define-derived-mode amble-session-mode text-mode "Amble"
   "Conversation and draft in one buffer. C-c C-c sends; RET inserts a newline."
   (setq-local truncate-lines nil word-wrap t)
-  (amble-input-setup))
+  (amble-input-setup)
+  (amble-input-setup-keys))
 
 (defun amble--log (label text &optional intermediate)
   "Insert a transcript entry above the draft, preserving typing and history view."
@@ -569,6 +570,7 @@ limitation or necessary next step. Distinguish verified facts from assumptions."
     (amble--log "Amble" "Ask about or operate your live Emacs. Use M-x amble from any buffer."))
   (unless (buffer-local-value 'amble--display-ready (get-buffer "*amble*"))
     (amble-refresh-display))
+  (with-current-buffer "*amble*" (amble-input-setup-keys))
   (amble-frame-display (get-buffer "*amble*") t))
 
 (defun amble-context ()

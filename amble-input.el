@@ -2,11 +2,14 @@
 ;; Package-Requires: ((emacs "31.1"))
 ;;; Code:
 (require 'amble-core)
+(require 'button)
 (declare-function amble "amble" (&optional prompt))
 (declare-function amble-session-mode "amble" ())
+(declare-function amble-keyboard-quit "amble" ())
 (defvar amble--busy)
 (defvar amble--last-error)
 (defvar amble--history nil)
+(defvar amble-session-mode-map)
 
 (defvar-local amble-input--prompt nil)
 (defvar-local amble-input--start nil)
@@ -15,6 +18,113 @@
 (defvar-local amble-input--saved-draft nil)
 (defvar-local amble-input--internal nil)
 (defvar-local amble-input--revision 0)
+
+(defconst amble-input--editing-commands
+  '(self-insert-command newline newline-and-indent open-line
+    forward-char backward-char right-char left-char next-line previous-line
+    forward-word backward-word right-word left-word
+    move-beginning-of-line move-end-of-line beginning-of-buffer end-of-buffer
+    back-to-indentation forward-paragraph backward-paragraph
+    forward-sentence backward-sentence forward-sexp backward-sexp
+    scroll-up-command scroll-down-command scroll-up scroll-down
+    scroll-left scroll-right recenter-top-bottom move-to-window-line-top-bottom
+    set-mark-command exchange-point-and-mark mark-whole-buffer mark-word
+    mark-paragraph mark-end-of-sentence mark-sexp
+    delete-char delete-forward-char delete-backward-char backward-delete-char
+    backward-delete-char-untabify delete-horizontal-space just-one-space
+    delete-blank-lines kill-line kill-whole-line kill-word backward-kill-word
+    kill-sentence backward-kill-sentence kill-region kill-ring-save
+    copy-region-as-kill yank yank-pop yank-from-kill-ring
+    clipboard-yank clipboard-kill-ring-save clipboard-kill-region
+    ns-copy-including-secondary ns-paste-secondary
+    undo undo-only undo-redo advertised-undo
+    transpose-chars transpose-words transpose-lines transpose-sentences
+    upcase-word downcase-word capitalize-word upcase-region downcase-region
+    capitalize-region upcase-dwim downcase-dwim capitalize-dwim
+    indent-for-tab-command indent-region fill-paragraph fill-region
+    isearch-forward isearch-backward isearch-forward-regexp isearch-backward-regexp
+    query-replace query-replace-regexp quoted-insert
+    toggle-input-method set-input-method universal-argument digit-argument
+    negative-argument keyboard-quit delete-selection-repeat-replace-region
+    mouse-set-point mouse-set-region mouse-drag-region mouse-save-then-kill
+    mouse-drag-region-shift-adjust mouse-yank-primary mouse-yank-secondary
+    mwheel-scroll pixel-scroll-precision mouse-wheel-text-scale
+    text-scale-adjust text-scale-increase text-scale-decrease
+    mouse-drag-header-line mouse-drag-mode-line mouse-select-window
+    handle-switch-frame handle-select-window ignore ignore-preserving-kill-region
+    amble-toggle-popup amble-show amble-hide amble-input-focus
+    amble-input-send amble-input-previous amble-input-next
+    amble-cancel amble-new-session amble-keyboard-quit)
+  "Global commands usable in the conversation without leaving its editing task.")
+
+(defun amble-input--blocked-key ()
+  "Report an unrelated shortcut in the header, without opening Messages."
+  (interactive)
+  (setq amble-input--notice "Shortcut disabled here; Esc returns to work")
+  (force-mode-line-update))
+
+(defun amble-input--editing-map (source &optional seen)
+  "Copy only editing bindings from SOURCE, blocking all other keys.
+Retain prefix maps and character ranges, including Unicode input.  SEEN
+prevents recursion when a user's prefix maps refer back to each other."
+  (let ((seen (or seen (make-hash-table :test #'eq))))
+    (or (gethash source seen)
+        (let ((map (make-keymap)))
+          (puthash source map seen)
+          (define-key map [t] #'amble-input--blocked-key)
+          (map-keymap
+           (lambda (event binding)
+             (unless (memq event '(menu-bar tool-bar tab-bar))
+               (let ((allowed
+                      (cond ((keymapp binding) (amble-input--editing-map binding seen))
+                            ((memq binding amble-input--editing-commands) binding))))
+                 (when allowed
+                   (if (consp event)
+                       (set-char-table-range (cadr map) event allowed)
+                     (define-key map (vector event) allowed))))))
+           source)
+          map))))
+
+(defun amble-input--mouse-activate (event)
+  "Activate a transcript button at EVENT, or paste normally in the draft."
+  (interactive "e")
+  (let* ((position (event-start event))
+         (window (posn-window position))
+         (point (posn-point position))
+         (button (and (window-live-p window) (integerp point)
+                      (with-current-buffer (window-buffer window) (button-at point)))))
+    (if button
+        (progn (mouse-set-point event) (button-activate button))
+      (mouse-yank-primary event))))
+
+(defun amble-input--shift-motion ()
+  "Move with Shift held, retaining ordinary region selection."
+  (interactive)
+  (let* ((event (event-convert-list
+                 (append (remq 'shift (event-modifiers last-command-event))
+                         (list (event-basic-type last-command-event)))))
+         (command (key-binding (vector event)))
+         (this-command-keys-shift-translated t))
+    (setq this-command command)
+    (call-interactively command)))
+
+(defun amble-input-setup-keys ()
+  "Isolate conversation keys from unrelated global and minor-mode bindings.
+Rebuild on opening to retain the user's current global editing and Amble
+shortcuts.  Minibuffers and temporary input/search maps remain independent."
+  (let ((editing (amble-input--editing-map (current-global-map))))
+    (define-key editing (kbd "C-g") #'amble-keyboard-quit)
+    ;; A catch-all stops Emacs's implicit Shift translation.  Preserve the
+    ;; standard shifted navigation explicitly, including region activation.
+    (dolist (key '("S-<left>" "S-<right>" "S-<up>" "S-<down>"
+                   "S-<home>" "S-<end>" "S-<prior>" "S-<next>"
+                   "C-S-<left>" "C-S-<right>" "C-S-<up>" "C-S-<down>"
+                   "C-S-<home>" "C-S-<end>"))
+      (define-key editing (kbd key) #'amble-input--shift-motion))
+    ;; The overriding map also bypasses button text-property keymaps.
+    (define-key editing [mouse-2] #'amble-input--mouse-activate)
+    (setq-local overriding-local-map
+                (make-composed-keymap amble-session-mode-map editing))))
 
 ;; Mode changes on reload must not lose the boundary or treat a draft as history.
 (dolist (symbol '(amble-input--prompt amble-input--start amble-input--revision))
