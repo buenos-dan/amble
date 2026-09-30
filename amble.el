@@ -1,6 +1,6 @@
 ;;; amble.el --- A general-purpose Emacs agent via ModelHub -*- lexical-binding: t; -*-
 
-;; Version: 0.5.1
+;; Version: 0.5.2
 ;; URL: https://github.com/buenos-dan/amble
 ;; Package-Requires: ((emacs "31.1"))
 ;; Keywords: convenience, tools
@@ -690,6 +690,7 @@ Completed editor actions remain in place. Conversation is reset to avoid replay.
     (amble-cancel)
     (amble-hide)))
 
+;;;###autoload
 (defun amble-toggle-popup ()
   "Toggle the floating conversation without changing the work layout."
   (interactive)
@@ -705,7 +706,6 @@ Completed editor actions remain in place. Conversation is reset to avoid replay.
 (add-to-list 'display-buffer-alist
              '("\\`\\*amble\\*\\'" (amble-frame-display-buffer)))
 (advice-remove 'amble-show 'amble-popup--remember-origin)
-(global-set-key (kbd "C-c e") #'amble-toggle-popup)
 
 (when (get-buffer "*amble*")
   (amble-refresh-display))

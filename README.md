@@ -15,6 +15,7 @@
        :branch "main"
        :rev :newest)
   :demand t
+  :bind ("C-c e" . amble-toggle-popup)
   :config
   (amble-mode 1))
 ```
@@ -56,7 +57,7 @@
 | `amble-new-session` | 清除模型会话历史，保留编辑器状态 |
 | `amble-reopen-cleaned` | 重新打开本次会话清理掉的文件 buffer |
 
-Amble 会话显示在工作 frame 上方的浮动 child frame 中，打开、隐藏不会新增分屏或改变工作窗口尺寸。`C-c e` 显示/隐藏；会话里按 `q` 或 `Esc` 隐藏并回到工作 frame，任务继续运行。`C-g` 才会取消任务。面板需要图形界面 Emacs，终端模式会明确提示。
+Amble 会话显示在工作 frame 上方的浮动 child frame 中，打开、隐藏不会新增分屏或改变工作窗口尺寸。上面的 `:bind` 示例使用 `C-c e` 显示/隐藏，包本身不设置此全局绑定，可按个人习惯修改；会话里按 `q` 或 `Esc` 隐藏并回到工作 frame，任务继续运行。`C-g` 才会取消任务。面板需要图形界面 Emacs，终端模式会明确提示。
 
 工具操作与上下文读取固定在发起任务的工作 frame 中；即使输入焦点位于聊天面板，左右分屏和结果仍展示在工作 frame。工作 frame 被关闭时停止操作，不自动转到其他窗口。面板可从边框拖动，父 frame 大小变化后自动重新适配。可通过 `amble-frame-width`、`amble-frame-height` 调整宽高占比（默认 0.48、0.45）。
 
